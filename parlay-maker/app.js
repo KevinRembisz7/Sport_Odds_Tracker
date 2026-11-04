@@ -112,7 +112,7 @@
   }
 
   // ---------- views ----------
-  const TABS = [['top', '🔥 Top Picks'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['record', '📈 Record'], ['how', '📘 How it works']];
+  const TABS = [['top', '🔥 Top Picks'], ['money', '💰 Money Builder'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['record', '📈 Record'], ['how', '📘 How it works']];
   function renderTabs() {
     $('tabs').innerHTML = TABS.map(([k, l]) => [k, k === 'sheet' && B365() ? '📋 bet365 Sheet' : l]).map(([k, l]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
   }
@@ -199,6 +199,50 @@
         h.parlay ? `<tr><td>${esc(h.date.replace(/(\d{4})(\d\d)(\d\d)/, '$2/$3'))}</td><td>🎯 Parlay</td><td>${h.parlay.legs.map(l => `${badge(l.result).replace(/ (Won|Lost|Push|Void|Pending|n\/a)/, '')} ${esc(l.pick)} <span class="muted">${esc(l.actual || '')}</span>`).join('<br>')}</td><td>${toAm(h.parlay.dec)}</td><td>${pct(h.parlay.p, 0)}</td><td>${badge(h.parlay.result)}</td><td></td></tr>` : '',
       ].join('')).join('')}
       </tbody></table></div></div>`;
+  }
+  // ---------- money builder: bets that (nearly) double your money ----------
+  const DBL_MIN = 1.8, DBL_MAX = 2.25;
+  function doublers() {
+    const pool = E.parlayPool([...card.lines, ...card.props]);
+    const singles = pool.filter(x => x.dec >= DBL_MIN && x.dec <= DBL_MAX)
+      .sort((a, b) => (b.fairP + (b.vibe?.score || 0) * 0.01) - (a.fairP + (a.vibe?.score || 0) * 0.01)).slice(0, 6);
+    const favs = pool.filter(x => x.fairP >= 0.55).sort((a, b) => b.fairP - a.fairP);
+    const combos = [], seen = new Set();
+    for (const k of [2, 3]) for (const r of E.buildParlays(favs, k, 'hit', S.kfrac)) {
+      if (r.s.dec < DBL_MIN || r.s.dec > DBL_MAX) continue;
+      const key = r.legs.map(l => l.id).sort().join('|'); if (seen.has(key)) continue;
+      seen.add(key); combos.push(r);
+    }
+    combos.sort((a, b) => b.s.p - a.s.p);
+    // keep variety: no leg in more than 2 of the shown doublers
+    const used = {}, picked = [];
+    for (const c of combos) {
+      if (c.legs.some(l => (used[l.id] || 0) >= 2)) continue;
+      c.legs.forEach(l => used[l.id] = (used[l.id] || 0) + 1); picked.push(c);
+      if (picked.length >= 6) break;
+    }
+    return { singles, combos: picked };
+  }
+  function ladderHTML(p, dec) {
+    return `<div class="ladder">${[1, 2, 3, 4, 5].map(n => {
+      const chance = p ** n, amt = (10 * dec ** n).toFixed(n > 2 ? 0 : 2).replace(/\.00$/, '');
+      return `<div class="rung"><div class="amt">$${amt}</div><div class="track" style="height:8px"><i style="width:${chance * 100}%;background:var(--edge)"></i></div>
+        <div class="muted" style="font-size:12px">${pct(chance, chance < 0.1 ? 1 : 0)} to get here · ${n} win${n > 1 ? 's' : ''} in a row</div></div>`;
+    }).join('')}</div>`;
+  }
+  function viewMoney() {
+    const { singles, combos } = doublers();
+    const opts = [...singles.map(x => ({ p: x.fairP, dec: x.dec })), ...combos.map(c => ({ p: c.s.p, dec: c.s.dec }))];
+    const best = opts.sort((a, b) => b.p - a.p)[0], bestP = best?.p || 0;
+    return `<div class="sec"><h2>💰 Money Builder</h2><span>bets that double your money (or close): $10 → $18–$22.50 · all +EV · ranked by chance to hit</span></div>
+      <div class="howto">💡 Even-money bets win about half the time, so the goal isn't a lock. It's getting <b>paid more than the real odds</b>, over and over. Same small stake every time and let the edge do the work.</div>
+      ${combos.length ? `<div class="sec"><h2>🔁 Doublers</h2><span>2–3 strong favorites stacked to pay about 2x</span></div>
+        <div class="pgrid">${combos.map((c, i) => parlayCard({ name: `Doubler #${i + 1}`, emoji: '💵', blurb: `${toAm(c.s.dec)} · $10 pays $${(10 * c.s.dec).toFixed(2)}`, legs: c.legs.map(l => l.id) }, i === 0)).join('')}</div>`
+        : empty('No +EV favorite combos land near 2x today.')}
+      ${singles.length ? `<div class="sec"><h2>🎯 Straight doublers</h2><span>single bets already near even money</span></div>
+        <div class="grid">${singles.map(x => pickCard_(x)).join('')}</div>` : ''}
+      ${bestP ? `<div class="sec"><h2>🪜 Double-up ladder</h2><span>what letting it ride really looks like with today's best doubler (${pct(bestP, 0)} to hit, ${best ? toAm(best.dec) : ''} per step)</span></div>
+        <div class="parlay">${ladderHTML(bestP, best.dec)}<p class="note">Each step doubles the pot, but the odds shrink fast. Most people do better banking the win and restarting at $10 than letting it ride.</p></div>` : ''}`;
   }
   function viewProps() {
     const items = sortItems(filtered(card.props));
@@ -310,8 +354,8 @@
         <p>The daily GitHub Action writes <code>data/latest.js</code>. Or open ⚙️ Settings, paste your Odds API key and hit ↻ Live refresh.</p>`);
       return;
     }
-    const v = { top: viewTop, record: viewRecord, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
-    renderFilters(S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? card.props : S.tab === 'lines' ? card.lines : [...card.lines, ...card.props], { markets: S.tab === 'props', sheet: S.tab === 'sheet' });
+    const v = { top: viewTop, money: viewMoney, record: viewRecord, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
+    renderFilters(S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? card.props : S.tab === 'lines' ? card.lines : [...card.lines, ...card.props], { markets: S.tab === 'props', sheet: S.tab === 'sheet' });
     $('view').innerHTML = v();
   }
 

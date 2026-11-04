@@ -136,6 +136,10 @@
   .res { font-weight: 800; font-size: 12px; white-space: nowrap; }
   .res.won { color: var(--edge); } .res.lost { color: var(--bad); } .res.pending { color: var(--warn); }
   .sec a { color: var(--accent); text-decoration: none; font-weight: 700; }
+  .ladder { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 640px) { .ladder { grid-template-columns: 1fr; } }
+  .rung { background: var(--panel2); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .rung .amt { font-size: 22px; font-weight: 900; color: var(--edge); }
   .howto { background: var(--edgebg); border-radius: 12px; padding: 10px 14px; font-size: 13.5px; margin-bottom: 12px; }
 
   /* section heads */
