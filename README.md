@@ -1,4 +1,4 @@
-# Claude Projects
+# ClaudeProjects
 
 Projects built with Claude Code.
 
