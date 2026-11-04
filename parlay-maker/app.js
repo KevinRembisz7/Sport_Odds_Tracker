@@ -14,7 +14,10 @@
     tab: store.get('tab', 'top'), lg: 'ALL', market: 'ALL', q: '', sort: 'ev',
     slip: store.get('slip', []), bankroll: store.get('bankroll', 500), kfrac: store.get('kfrac', 0.25),
     key: store.get('key', ''), budget: store.get('budget', 20), allBooks: store.get('allBooks', false),
+    myBook: store.get('myBook', 'bet365'), prices: store.get('prices', {}), type: 'ALL', shown: 120,
   };
+  const B365 = () => S.myBook === 'bet365';
+  const EDGE_BUFFER = 0.02; // target price = break-even + 2% EV
   let byId = {};
   function pickCard() {
     const daily = window.EDGE_CARD, live = store.get('liveCard', null);
@@ -25,8 +28,28 @@
     byId = {};
     if (!card) return;
     for (const x of [...card.lines, ...card.props]) byId[x.id] = x;
-    S.slip = S.slip.filter(id => byId[id]);
+    for (const x of card.board || []) if (!byId[x.id]) byId[x.id] = x;
+    applyPrices();
+    S.slip = S.slip.filter(id => byId[id]?.dec);
   }
+  // Prices the user typed in from their own book (bet365) override the pulled best price.
+  function applyPrices() {
+    for (const x of Object.values(byId)) {
+      if (!x._orig) x._orig = { dec: x.dec, book: x.book, ev: x.ev };
+      const am = S.prices[x.id];
+      if (am) { x.dec = E.toDec(am); x.book = 'bet365'; x.ev = x.fairP * x.dec - 1; x.mine = true; }
+      else { Object.assign(x, x._orig); x.mine = false; }
+    }
+  }
+  const targetAm = x => toAm((1 + EDGE_BUFFER) / x.fairP);
+  function setPrice(id, raw) {
+    const am = parseInt(String(raw).replace(/[^\d+-]/g, ''), 10);
+    if (am && Math.abs(am) >= 100) S.prices[id] = am; else delete S.prices[id];
+    store.set('prices', S.prices); applyPrices();
+    if (!byId[id]?.dec) S.slip = S.slip.filter(x => x !== id);
+    render();
+  }
+  const priceInput = x => `<input class="pin" inputmode="numeric" data-price="${esc(x.id)}" placeholder="bet365 odds" value="${S.prices[x.id] ? (S.prices[x.id] > 0 ? '+' : '') + S.prices[x.id] : ''}">`;
 
   // ---------- helpers ----------
   const fmtTime = iso => iso ? new Date(iso).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
@@ -79,6 +102,7 @@
         <div class="meter"><span>Book</span><div class="track"><i style="width:${100 / x.dec}%;background:var(--muted)"></i></div><b>${pct(1 / x.dec, 0)}</b></div>
       </div>
       ${hit ? `<div class="spark">${sparkSVG(hit, x.point)}<div><span class="hitrate">${hit.hits}/${hit.n}</span> ${x.side.toLowerCase()} last ${hit.n}<br>avg ${hit.avg.toFixed(1)} · line ${x.point}</div></div>` : ''}
+      ${B365() ? `<div class="b365"><span>🎯 bet365 target <b>${targetAm(x)}</b> or better</span>${priceInput(x)}</div>` : ''}
       ${items.length ? `<ul class="why-mini">${items.map(i => `<li class="${i.tone}">${i.text}</li>`).join('')}</ul>` : ''}
       <div class="c-foot"><span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)} EV</span>
         <span class="muted" style="font-size:12px">fair ${toAm(1 / x.fairP)}</span>${isSus(x) ? '<span class="sus">⚠ sus line</span>' : ''}
@@ -87,18 +111,18 @@
   }
 
   // ---------- views ----------
-  const TABS = [['top', '🔥 Top Picks'], ['props', '🎯 Player Props'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['how', '📘 How it works']];
+  const TABS = [['top', '🔥 Top Picks'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['how', '📘 How it works']];
   function renderTabs() {
-    $('tabs').innerHTML = TABS.map(([k, l]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
+    $('tabs').innerHTML = TABS.map(([k, l]) => [k, k === 'sheet' && B365() ? '📋 bet365 Sheet' : l]).map(([k, l]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
   }
   function leagues(items) { return ['ALL', ...new Set(items.map(x => x.lg))]; }
   function filtered(items) {
     const q = E.norm(S.q);
     return items.filter(x => (S.lg === 'ALL' || x.lg === S.lg) && (S.market === 'ALL' || x.statLabel === S.market)
-      && (!q || E.norm(x.pick + ' ' + x.game).includes(q)));
+      && (S.type === 'ALL' || x.type === S.type) && (!q || E.norm(x.pick + ' ' + x.game).includes(q)));
   }
   function sortItems(items) {
-    const k = { ev: x => x.ev, vibe: x => (x.vibe?.score || 0) + x.ev, hit: x => x.vibe?.hit?.l10 ?? -1, time: x => -new Date(x.start) }[S.sort] || (x => x.ev);
+    const k = { ev: x => x.ev ?? -9, vibe: x => (x.vibe?.score || 0) + x.ev, hit: x => x.vibe?.hit?.l10 ?? -1, time: x => -new Date(x.start) }[S.sort] || (x => x.ev);
     return [...items].sort((a, b) => k(b) - k(a));
   }
   function renderFilters(items, opts = {}) {
@@ -108,8 +132,10 @@
     $('filters').innerHTML = lg.map(l => `<button class="chip ${S.lg === l ? 'on' : ''}" data-lg="${esc(l)}">${l === 'ALL' ? 'All' : esc(l)}</button>`).join('')
       + (markets && markets.length > 2 ? '<span style="width:8px"></span>' + markets.map(m => `<button class="chip ${S.market === m ? 'on' : ''}" data-mk="${esc(m)}">${m === 'ALL' ? 'All stats' : esc(m)}</button>`).join('') : '')
       + `<span class="spacer"></span><input id="q" placeholder="Search team or player" value="${esc(S.q)}" size="18">
+         ${opts.sheet ? '<select id="type"><option value="ALL">Lines + props</option><option value="line">Game lines</option><option value="prop">Player props</option></select>' : ''}
          <select id="sort"><option value="ev">Sort: Edge</option><option value="vibe">Sort: Vibe</option>${opts.markets ? '<option value="hit">Sort: Hit rate</option>' : ''}<option value="time">Sort: Start time</option></select>`;
     $('sort').value = S.sort;
+    if ($('type')) $('type').value = S.type;
   }
 
   function viewTop() {
@@ -138,6 +164,21 @@
         <td><span class="edge">${signPct(x.ev)}</span>${isSus(x) ? ' <span class="sus">⚠ sus</span>' : ''}</td><td><span class="vibe ${vibeCls(x.vibe)}">${vibeTxt(x.vibe)}</span></td>
         <td><button class="add ${S.slip.includes(x.id) ? 'in' : ''}" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓' : '+'}</button></td></tr>`).join('')}
       </tbody></table></div></div>`;
+  }
+  function viewSheet() {
+    if (!card.board?.length) return empty('The full fair-odds sheet arrives with the next daily build (or hit ↻ Live refresh).');
+    const all = filtered(card.board.map(x => byId[x.id]));
+    const items = S.sort === 'time' || S.sort === 'ev' ? [...all].sort((a, b) => (b.mine ? 1 : 0) - (a.mine ? 1 : 0) || (S.sort === 'ev' ? (b.ev ?? -9) - (a.ev ?? -9) : 0) || a.start.localeCompare(b.start)) : sortItems(all);
+    const rows = items.slice(0, S.shown);
+    return `<div class="sec"><h2>${B365() ? 'bet365 sheet' : 'Fair odds sheet'}</h2><span>${all.length} lines &amp; props · the sharp no-vig price for everything on the board</span></div>
+      <div class="howto">📲 Open bet365 → find the bet → if their odds are <b>at or above the target</b>, it's +EV. Type their price in to see your exact edge and add it to the slip.</div>
+      <div class="tbl"><div class="scroll"><table><thead><tr><th></th><th>Pick</th><th>Game</th><th>Start</th><th>Fair</th><th>Target</th><th>bet365 price</th><th>Edge</th><th></th></tr></thead><tbody>
+      ${rows.map(x => `<tr data-open="${esc(x.id)}"><td><span class="tag">${x.emoji} ${esc(x.lg)}</span></td><td><b>${esc(x.pick)}</b></td><td class="muted">${esc(x.game)}</td>
+        <td class="muted">${esc(fmtTime(x.start))}</td><td>${toAm(1 / x.fairP)}</td><td><b style="color:var(--edge)">${targetAm(x)}</b></td><td>${priceInput(x)}</td>
+        <td>${x.mine ? `<span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)}</span>` : '<span class="muted">—</span>'}</td>
+        <td>${x.dec ? `<button class="add ${S.slip.includes(x.id) ? 'in' : ''}" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓' : '+'}</button>` : ''}</td></tr>`).join('')}
+      </tbody></table></div></div>
+      ${items.length > rows.length ? `<div style="text-align:center;margin-top:12px"><button class="btn" id="moreBtn">Show more (${items.length - rows.length} left)</button></div>` : ''}`;
   }
   function parlayCard(p, feat) {
     const legs = p.legs.map(id => byId[id]).filter(Boolean);
@@ -217,8 +258,8 @@
         <p>The daily GitHub Action writes <code>data/latest.js</code>. Or open ⚙️ Settings, paste your Odds API key and hit ↻ Live refresh.</p>`);
       return;
     }
-    const v = { top: viewTop, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
-    renderFilters(S.tab === 'how' || S.tab === 'parlays' ? null : S.tab === 'props' ? card.props : S.tab === 'lines' ? card.lines : [...card.lines, ...card.props], { markets: S.tab === 'props' });
+    const v = { top: viewTop, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
+    renderFilters(S.tab === 'how' || S.tab === 'parlays' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? card.props : S.tab === 'lines' ? card.lines : [...card.lines, ...card.props], { markets: S.tab === 'props', sheet: S.tab === 'sheet' });
     $('view').innerHTML = v();
   }
 
@@ -230,7 +271,7 @@
     const t = titleOf(x), g = gameOf(x), v = x.vibe || { items: [] }, hit = v.hit;
     let probs = `<h4>Win chance</h4>
       <div class="meter"><span>True</span><div class="track"><i style="width:${x.fairP * 100}%;background:var(--edge)"></i></div><b>${pct(x.fairP, 0)}</b></div>
-      <div class="meter"><span>Book</span><div class="track"><i style="width:${100 / x.dec}%;background:var(--muted)"></i></div><b>${pct(1 / x.dec, 0)}</b></div>`;
+      ${x.dec ? '' : '<!--'}<div class="meter"><span>Book</span><div class="track"><i style="width:${100 / x.dec}%;background:var(--muted)"></i></div><b>${pct(1 / x.dec, 0)}</b></div>${x.dec ? '' : '-->'}`;
     if (x.type === 'line' && x.market === 'h2h' && g?.model) {
       const side = teamSide(x), m = side && g.model[side.name];
       if (m != null) probs += `<div class="meter"><span>ESPN</span><div class="track"><i style="width:${m * 100}%;background:var(--accent)"></i></div><b>${pct(m, 0)}</b></div>`;
@@ -254,14 +295,15 @@
         <div class="teamcols">${col(g.away)}${col(g.home)}</div>`;
     }
     $('modal').innerHTML = `<div class="m-head">${avatar(x)}<div class="c-title"><div class="n" style="font-size:19px">${esc(t.n)}</div><div class="p">${esc(t.p)}</div><div class="g">${esc(x.game)} · ${esc(fmtTime(x.start))}</div></div>
-        <div class="price"><b>${toAm(x.dec)}</b><small>${esc(x.book)}</small></div><button class="x" data-close>✕</button></div>
+        <div class="price"><b>${x.dec ? toAm(x.dec) : toAm(1 / x.fairP)}</b><small>${x.dec ? esc(x.book) : 'fair'}</small></div><button class="x" data-close>✕</button></div>
       <div class="m-body">
         <div><h4>Why this pick <span class="vibe ${vibeCls(x.vibe)}">${vibeTxt(x.vibe)}</span></h4><ul class="why">${v.items.map(i => `<li class="${i.tone}">${i.text}</li>`).join('')}</ul>${hitBlock}</div>
         <div>${probs}
-          <p class="note" style="margin-top:10px"><span class="edge">${signPct(x.ev)} EV</span> &nbsp;fair ${toAm(1 / x.fairP)} via ${esc(x.src)}${x.nBooks ? ` (${x.nBooks} books)` : ''}</p>
+          <p class="note" style="margin-top:10px">${x.dec ? `<span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)} EV</span>` : ''} &nbsp;fair ${toAm(1 / x.fairP)} via ${esc(x.src)}${x.nBooks ? ` (${x.nBooks} books)` : ''}</p>
+          ${B365() ? `<div class="b365" style="margin-top:12px"><span>🎯 Bet at bet365 if odds are <b>${targetAm(x)}</b> or better</span>${priceInput(x)}</div>` : ''}
           ${isSus(x) ? '<div class="warnbox">⚠ Edge this big usually means a stale or mistaken line. Check news before betting.</div>' : ''}
           ${priceList ? `<h4 style="margin-top:14px">Best prices</h4><div>${priceList}</div>` : ''}
-          <div style="margin-top:14px"><button class="btn primary" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓ In slip — remove' : '+ Add to slip'}</button></div>
+          <div style="margin-top:14px">${x.dec ? '' : '<p class="note">Type the bet365 price above to add this to your slip.</p>'}<button class="btn primary" ${x.dec ? '' : 'disabled'} data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓ In slip — remove' : '+ Add to slip'}</button></div>
         </div>
         ${gameBlock}
       </div>`;
@@ -269,7 +311,7 @@
   }
 
   // ---------- slip ----------
-  const slipLegs = () => S.slip.map(id => byId[id]).filter(Boolean);
+  const slipLegs = () => S.slip.map(id => byId[id]).filter(x => x?.dec);
   function toggleSlip(id) {
     S.slip = S.slip.includes(id) ? S.slip.filter(x => x !== id) : [...S.slip, id];
     store.set('slip', S.slip); render();
@@ -304,6 +346,7 @@
       <label>The Odds API key <input id="sKey" type="password" value="${esc(S.key)}" placeholder="free at the-odds-api.com"></label>
       <label>Credits per live refresh <input id="sBudget" type="number" min="3" value="${esc(S.budget)}"></label>
       <p class="note">~3 credits per sport for lines, ~3–5 per game for props. Free tier = 500/month, shared with the daily build.</p>
+      <label>My sportsbook <select id="sMyBook"><option value="bet365">bet365 (I type in prices)</option><option value="best">Best price across US books</option></select></label>
       <label>Books I can bet <select id="sBooks"><option value="0">US books</option><option value="1" ${S.allBooks ? 'selected' : ''}>All books</option></select></label>
       <label>Bankroll ($) <input id="sBank" type="number" value="${esc(S.bankroll)}"></label>
       <label>Kelly fraction <select id="sKelly">${[[0.1, '1/10'], [0.25, '1/4'], [0.5, '1/2']].map(([v, l]) => `<option value="${v}" ${S.kfrac === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
@@ -312,6 +355,7 @@
       ${store.get('liveCard', null) ? '<button class="btn" id="dropLive">Go back to the daily card</button>' : ''}
       <p class="note">Your key is stored only in this browser.</p></div>`);
     $('sTheme').value = store.get('theme', '');
+    $('sMyBook').value = S.myBook;
   }
   async function liveRefresh() {
     if (!S.key) { openSettings(); return; }
@@ -331,6 +375,8 @@
   function applyTheme() { const t = store.get('theme', ''); if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
 
   document.addEventListener('click', e => {
+    if (e.target.closest('input.pin')) return;
+    if (e.target.id === 'moreBtn') { S.shown += 150; render(); return; }
     const el = e.target.closest('[data-add],[data-open],[data-tab],[data-lg],[data-mk],[data-close],[data-loadparlay],#overlay,#slipbar,#liveBtn,#setBtn,#saveSet,#dropLive,#clearSlip,#buildBtn');
     if (!el) return;
     if (el.dataset.add) { e.stopPropagation(); toggleSlip(el.dataset.add); return; }
@@ -348,10 +394,10 @@
       case 'dropLive': store.set('liveCard', null); try { localStorage.removeItem('edge.liveCard'); } catch (err) {} card = window.EDGE_CARD; index(); render(); closeAll(); break;
       case 'saveSet':
         S.key = $('sKey').value.trim(); S.budget = Math.max(3, +$('sBudget').value || 20); S.allBooks = $('sBooks').value === '1';
-        S.bankroll = +$('sBank').value || 500; S.kfrac = +$('sKelly').value;
-        ['key', 'budget', 'allBooks', 'bankroll', 'kfrac'].forEach(k => store.set(k, S[k]));
+        S.bankroll = +$('sBank').value || 500; S.kfrac = +$('sKelly').value; S.myBook = $('sMyBook').value;
+        ['key', 'budget', 'allBooks', 'bankroll', 'kfrac', 'myBook'].forEach(k => store.set(k, S[k]));
         store.set('theme', $('sTheme').value); applyTheme();
-        if (card) { E.applyBooks([...card.lines, ...card.props], S.allBooks); }
+        if (card) { E.applyBooks([...card.lines, ...card.props], S.allBooks); Object.values(byId).forEach(x => delete x._orig); applyPrices(); }
         closeAll(); render(); break;
       case 'buildBtn': {
         const src = $('bsrc').value, lg = $('blg').value;
@@ -366,7 +412,11 @@
   document.addEventListener('input', e => {
     if (e.target.id === 'q') { S.q = e.target.value; const pos = e.target.selectionStart; render(); const q = $('q'); q.focus(); q.setSelectionRange(pos, pos); }
   });
-  document.addEventListener('change', e => { if (e.target.id === 'sort') { S.sort = e.target.value; render(); } });
+  document.addEventListener('change', e => {
+    if (e.target.id === 'sort') { S.sort = e.target.value; render(); }
+    if (e.target.id === 'type') { S.type = e.target.value; S.shown = 120; render(); }
+    if (e.target.dataset?.price) { const id = e.target.dataset.price, open = $('modal').classList.contains('show'); setPrice(id, e.target.value); if (open) openDetail(id); }
+  });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
 
   applyTheme(); index(); render();

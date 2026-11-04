@@ -463,6 +463,10 @@
     log(`props pulled for ${new Set(props.map(p => p.eventId)).size} games, ${props.length} prop sides`);
 
     applyBooks(lines, allowAll); applyBooks(props, allowAll);
+    // Full fair-odds board (every line + prop, +EV or not) for people pricing a book we can't pull, e.g. bet365.
+    const keep = ['id', 'type', 'eventId', 'sport', 'lg', 'emoji', 'game', 'home', 'away', 'team', 'market', 'point', 'pick',
+      'player', 'side', 'statLabel', 'fairP', 'src', 'start'];
+    card.board = [...lines, ...props].map(x => Object.fromEntries(keep.filter(k => x[k] != null).map(k => [k, x[k]])));
     lines = lines.filter(l => l.dec && l.ev >= 0.005).sort((a, b) => b.ev - a.ev).slice(0, maxLines);
     props = props.filter(p => p.dec && p.ev >= 0.01).sort((a, b) => b.ev - a.ev).slice(0, maxProps);
 
