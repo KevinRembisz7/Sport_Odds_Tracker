@@ -25,8 +25,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
 
@@ -36,7 +36,12 @@ jobs:
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           DAILY_BUDGET: ${{ inputs.budget || vars.DAILY_BUDGET || 'auto' }}
-        run: node parlay-maker/scripts/build.js
+        run: |
+          if [ -z "$ODDS_API_KEY" ]; then
+            echo "::warning title=No ODDS_API_KEY secret::Publishing the last saved card. Add the secret under Settings → Secrets and variables → Actions to get a fresh card every day."
+            exit 0
+          fi
+          node parlay-maker/scripts/build.js
 
       - name: Save card to the repo
         if: github.event_name != 'push'
