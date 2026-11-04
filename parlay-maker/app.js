@@ -19,6 +19,7 @@
   const B365 = () => S.myBook === 'bet365';
   const EDGE_BUFFER = 0.02; // target price = break-even + 2% EV
   let byId = {};
+  const H = window.EDGE_HISTORY || [];
   function pickCard() {
     const daily = window.EDGE_CARD, live = store.get('liveCard', null);
     if (live && (!daily || live.generatedAt > daily.generatedAt)) return live;
@@ -111,7 +112,7 @@
   }
 
   // ---------- views ----------
-  const TABS = [['top', '🔥 Top Picks'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['how', '📘 How it works']];
+  const TABS = [['top', '🔥 Top Picks'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['record', '📈 Record'], ['how', '📘 How it works']];
   function renderTabs() {
     $('tabs').innerHTML = TABS.map(([k, l]) => [k, k === 'sheet' && B365() ? '📋 bet365 Sheet' : l]).map(([k, l]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
   }
@@ -143,10 +144,61 @@
     const best = sortItems(filtered(all).filter(x => (x.vibe?.score || 0) >= 0)).sort((a, b) =>
       (b.ev + (b.vibe?.score || 0) * 0.012) - (a.ev + (a.vibe?.score || 0) * 0.012)).slice(0, 12);
     const fades = filtered(all).filter(x => x.vibe?.score <= -2).sort((a, b) => b.ev - a.ev).slice(0, 3);
-    return `<div class="sec"><h2>Best bets on the board</h2><span>edge + matchup backing, sus lines removed</span></div>
+    return `${heroHTML()}${recordStrip()}
+      <div class="sec"><h2>Best bets on the board</h2><span>edge + matchup backing, sus lines removed</span></div>
       ${best.length ? `<div class="grid">${best.map((x, i) => pickCard_(x, i < 3)).join('')}</div>` : empty('No +EV picks match these filters.')}
       ${card.parlays?.length ? `<div class="sec"><h2>Today's parlays</h2><span>auto-built, one leg per game</span></div><div class="pgrid">${card.parlays.map((p, i) => parlayCard(p, i === 1)).join('')}</div>` : ''}
       ${fades.length ? `<div class="sec"><h2>🚩 Price says yes, matchup says no</h2><span>+EV on paper, but the data fades them — tap to see why</span></div><div class="grid">${fades.map(x => pickCard_(x)).join('')}</div>` : ''}`;
+  }
+  // ---------- pick / parlay of the day + track record ----------
+  function heroHTML() {
+    const p = byId[card.potd], par = card.potdParlay;
+    if (!p && !par) return '';
+    const why = p ? [`<b>${signPct(p.ev)}</b> edge`, `<b>${pct(p.fairP, 0)}</b> to hit`, p.vibe ? `vibe <b>${p.vibe.score > 0 ? '+' : ''}${p.vibe.score}</b>` : '',
+      p.vibe?.hit ? `cleared <b>${p.vibe.hit.hits}/${p.vibe.hit.n}</b> recent games` : ''].filter(Boolean).join(' · ') : '';
+    return `<div class="hero2">
+      ${p ? `<div><div class="ribbon">⭐ PICK OF THE DAY</div>${pickCard_(p, true)}<p class="note">Why it's the pick: ${why}</p></div>` : ''}
+      ${par ? `<div><div class="ribbon alt">🎯 PARLAY OF THE DAY · most likely to hit</div>${parlayCard({ name: 'Parlay of the Day', emoji: '🎯', blurb: `Every leg ${'≥'}50% to win on its own, all +EV, one per game`, legs: par.legs }, true)}</div>` : ''}
+    </div>`;
+  }
+  function settledRows(kind) {
+    return H.map(h => {
+      if (kind === 'potd' && h.potd) return { date: h.date, dec: h.potd.dec, p: h.potd.fairP, result: h.potd.result, label: h.potd.pick, actual: h.potd.actual, odds: toAm(h.potd.dec) };
+      if (kind === 'parlay' && h.parlay) {
+        const pay = h.parlay.legs.reduce((a, l) => a * (l.result === 'won' ? l.dec : 1), 1);
+        return { date: h.date, dec: pay, p: h.parlay.p, result: h.parlay.result, label: h.parlay.legs.map(l => l.pick).join(' + '), legs: h.parlay.legs, odds: toAm(h.parlay.dec) };
+      }
+    }).filter(Boolean);
+  }
+  function recordOf(kind) {
+    const rows = settledRows(kind), done = rows.filter(r => ['won', 'lost', 'push', 'void'].includes(r.result));
+    const W = done.filter(r => r.result === 'won').length, L = done.filter(r => r.result === 'lost').length, P = done.length - W - L;
+    const units = done.reduce((a, r) => a + (r.result === 'won' ? r.dec - 1 : r.result === 'lost' ? -1 : 0), 0);
+    const wl = done.filter(r => r.result === 'won' || r.result === 'lost');
+    const exp = wl.length ? wl.reduce((a, r) => a + r.p, 0) / wl.length : null;
+    return { rows, done, W, L, P, units, exp, act: wl.length ? W / wl.length : null };
+  }
+  const resDot = r => `<span class="rd ${esc(r.result)}" title="${esc(r.date)} · ${esc(r.label)}${r.actual ? ' · ' + esc(r.actual) : ''}">${r.result === 'won' ? '✓' : r.result === 'lost' ? '✕' : r.result === 'pending' ? '•' : '–'}</span>`;
+  function recordStrip() {
+    const a = recordOf('potd'), b = recordOf('parlay');
+    if (!a.rows.length && !b.rows.length) return '';
+    const tile = (title, r) => `<div class="kpi"><div class="l">${title}</div>
+      <div class="v">${r.done.length ? `${r.W}-${r.L}${r.P ? '-' + r.P : ''}` : '—'}</div>
+      <div class="s">${r.done.length ? `<span style="color:${r.units >= 0 ? 'var(--edge)' : 'var(--bad)'}">${r.units >= 0 ? '+' : ''}${r.units.toFixed(2)}u</span> · hit ${pct(r.act ?? 0, 0)} vs ${pct(r.exp ?? 0, 0)} expected` : 'first result grades tomorrow morning'}</div>
+      <div class="dots2">${r.rows.slice(0, 10).map(resDot).join('')}</div></div>`;
+    return `<div class="sec"><h2>📈 Track record</h2><span>auto-graded from final box scores · 1 unit flat stakes · <a href="#" data-tab="record">full history →</a></span></div>
+      <div class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr))">${tile('⭐ Pick of the Day', a)}${tile('🎯 Parlay of the Day', b)}</div>`;
+  }
+  function viewRecord() {
+    if (!H.length) return empty('No history yet. Every morning the Pick and Parlay of the Day get saved, then graded from the final box scores the next morning.');
+    const badge = r => `<span class="res ${esc(r)}">${r === 'won' ? '✅ Won' : r === 'lost' ? '❌ Lost' : r === 'push' ? '➖ Push' : r === 'void' ? '⚪ Void' : r === 'ungraded' ? '— n/a' : '⏳ Pending'}</span>`;
+    return `${recordStrip()}<div class="sec"><h2>Every pick, every result</h2></div>
+      <div class="tbl"><div class="scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Pick</th><th>Odds</th><th>Win %</th><th>Result</th><th>Final</th></tr></thead><tbody>
+      ${H.map(h => [
+        h.potd ? `<tr><td>${esc(h.date.replace(/(\d{4})(\d\d)(\d\d)/, '$2/$3'))}</td><td>⭐ Pick</td><td><b>${esc(h.potd.pick)}</b><br><span class="muted">${esc(h.potd.game)}</span></td><td>${toAm(h.potd.dec)} <span class="muted">${esc(h.potd.book)}</span></td><td>${pct(h.potd.fairP, 0)}</td><td>${badge(h.potd.result)}</td><td class="muted">${esc(h.potd.actual || '')}</td></tr>` : '',
+        h.parlay ? `<tr><td>${esc(h.date.replace(/(\d{4})(\d\d)(\d\d)/, '$2/$3'))}</td><td>🎯 Parlay</td><td>${h.parlay.legs.map(l => `${badge(l.result).replace(/ (Won|Lost|Push|Void|Pending|n\/a)/, '')} ${esc(l.pick)} <span class="muted">${esc(l.actual || '')}</span>`).join('<br>')}</td><td>${toAm(h.parlay.dec)}</td><td>${pct(h.parlay.p, 0)}</td><td>${badge(h.parlay.result)}</td><td></td></tr>` : '',
+      ].join('')).join('')}
+      </tbody></table></div></div>`;
   }
   function viewProps() {
     const items = sortItems(filtered(card.props));
@@ -187,7 +239,7 @@
     return `<div class="parlay ${feat ? 'feat' : ''}">
       <h3>${p.emoji || '🎟️'} ${esc(p.name)} <span class="odds">${toAm(s.dec)}</span></h3>
       ${p.blurb ? `<div class="blurb">${esc(p.blurb)}</div>` : ''}
-      ${legs.map(l => { const t = titleOf(l); return `<div class="pleg" data-open="${esc(l.id)}" style="cursor:pointer">${avatar(l)}<div class="t"><b>${esc(t.n)}</b><span class="muted">${esc(t.p)} · ${esc(l.book)}</span></div><b>${toAm(l.dec)}</b></div>`; }).join('')}
+      ${legs.map(l => { const t = titleOf(l); return `<div class="pleg" data-open="${esc(l.id)}" style="cursor:pointer">${avatar(l)}<div class="t"><b>${esc(t.n)}</b><span class="muted">${esc(t.p)} · ${esc(l.book)}${l.vibe?.hit ? ` · <b style="display:inline;color:var(--edge)">hit ${l.vibe.hit.hits}/${l.vibe.hit.n}</b>` : ''} · ${pct(l.fairP, 0)}</span></div><b>${toAm(l.dec)}</b></div>`; }).join('')}
       <div class="pstats"><div><small>Hit</small><b>${pct(s.p, 1)}</b></div><div><small>EV</small><b style="color:var(--edge)">${signPct(s.ev)}</b></div>
         <div><small>Stake</small><b>$${(s.f * S.bankroll).toFixed(2)}</b></div><div><small>$10 pays</small><b>$${(10 * s.dec).toFixed(0)}</b></div></div>
       <button class="btn small" data-loadparlay="${esc(p.legs.join(','))}">Load into slip</button>
@@ -258,8 +310,8 @@
         <p>The daily GitHub Action writes <code>data/latest.js</code>. Or open ⚙️ Settings, paste your Odds API key and hit ↻ Live refresh.</p>`);
       return;
     }
-    const v = { top: viewTop, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
-    renderFilters(S.tab === 'how' || S.tab === 'parlays' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? card.props : S.tab === 'lines' ? card.lines : [...card.lines, ...card.props], { markets: S.tab === 'props', sheet: S.tab === 'sheet' });
+    const v = { top: viewTop, record: viewRecord, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
+    renderFilters(S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? card.props : S.tab === 'lines' ? card.lines : [...card.lines, ...card.props], { markets: S.tab === 'props', sheet: S.tab === 'sheet' });
     $('view').innerHTML = v();
   }
 
@@ -381,7 +433,7 @@
     if (!el) return;
     if (el.dataset.add) { e.stopPropagation(); toggleSlip(el.dataset.add); return; }
     if (el.dataset.open) { openDetail(el.dataset.open); return; }
-    if (el.dataset.tab) { S.tab = el.dataset.tab; store.set('tab', S.tab); S.market = 'ALL'; render(); return; }
+    if (el.dataset.tab) { e.preventDefault(); window.scrollTo({ top: 0 }); S.tab = el.dataset.tab; store.set('tab', S.tab); S.market = 'ALL'; render(); return; }
     if (el.dataset.lg) { S.lg = el.dataset.lg; S.market = 'ALL'; render(); return; }
     if (el.dataset.mk) { S.market = el.dataset.mk; render(); return; }
     if (el.dataset.loadparlay) { S.slip = el.dataset.loadparlay.split(','); store.set('slip', S.slip); render(); openSlip(); return; }

@@ -513,13 +513,121 @@
       { name: 'Value', emoji: '💎', blurb: '3 legs, best long-run bankroll growth', ...pick(3, 'growth', 0) },
       { name: 'Lotto', emoji: '🚀', blurb: '4 legs, biggest EV — small stake, big sweat', ...pick(4, 'ev', 0.03) },
     ].filter(p => p.legs).map(p => ({ ...p, legs: p.legs.map(l => l.id) }));
+    const potd = pickOfDay([...lines, ...props]);
+    card.potd = potd ? potd.id : null;
+    card.potdParlay = parlayOfDay([...lines, ...props]);
     log(`analyzed ${Object.keys(card.games).length} games`);
     return card;
   }
 
+  // ---------------- pick / parlay of the day ----------------
+  // Best single: edge × sqrt(win chance), boosted by matchup vibe and recent hit rate. Needs a real but believable
+  // edge (1.5–12%: bigger edges are usually stale lines) and matchup backing.
+  function pickOfDay(items) {
+    const ok = (x, minVibe, minP) => x.dec && x.ev >= 0.015 && x.ev < 0.12 && (x.vibe?.score || 0) >= minVibe && x.fairP >= minP;
+    let c = items.filter(x => ok(x, 1, 0.4));
+    if (!c.length) c = items.filter(x => ok(x, 0, 0.3));
+    const score = x => x.ev * Math.sqrt(x.fairP) * (1 + 0.25 * (x.vibe?.score || 0)) + (x.vibe?.hit ? (x.vibe.hit.l10 - 0.5) * 0.02 : 0);
+    return c.sort((a, b) => score(b) - score(a))[0] || null;
+  }
+  // Most likely +EV parlay to cash: likely legs only (≥50% each), one per game, ranked by hit chance.
+  function parlayOfDay(items) {
+    const pool = parlayPool(items).filter(x => x.fairP >= 0.5 && (x.vibe?.score || 0) >= 0);
+    for (const k of [3, 2]) {
+      const best = buildParlays(pool, k, 'hit')[0];
+      if (best) return { legs: best.legs.map(l => l.id), dec: best.s.dec, p: best.s.p, ev: best.s.ev };
+    }
+    return null;
+  }
+
+  // ---------------- grading (results from ESPN finals) ----------------
+  function boxRows(sum) {
+    const rows = {};
+    for (const t of sum?.boxscore?.players || []) for (const cat of t.statistics || []) {
+      const names = cat.names || cat.keys || [], labels = cat.labels || [];
+      for (const a of cat.athletes || []) {
+        const key = normName(a.athlete?.displayName); if (!key) continue;
+        const row = rows[key] ||= { _dnp: true };
+        if (a.stats?.length) row._dnp = false;
+        (a.stats || []).forEach((v, i) => { if (names[i] && row[names[i]] == null) row[names[i]] = v; if (labels[i] && row[labels[i]] == null) row[labels[i]] = v; });
+      }
+    }
+    for (const r of Object.values(rows)) if (r.points == null && r.goals != null && r.assists != null) r.points = String(+r.goals + +r.assists);
+    return rows;
+  }
+  async function gradeLeg(leg, getJSON) {
+    const S = SPORTS[leg.sport];
+    if (!S?.espn || !leg.start) return { result: 'ungraded' };
+    const base = `https://site.api.espn.com/apis/site/v2/sports/${S.espn}`;
+    const sb = await getJSON(`${base}/scoreboard?dates=${etDate(leg.start)}${S.q || ''}`);
+    let ev = null;
+    for (const e of sb?.events || []) {
+      const cs = e.competitions[0].competitors, h = cs.find(c => c.homeAway === 'home'), a = cs.find(c => c.homeAway === 'away');
+      if (h && a && teamMatches(h.team, leg.home) && teamMatches(a.team, leg.away)) { ev = { e, h, a }; break; }
+    }
+    if (!ev) return { result: 'pending' };
+    const st = ev.e.competitions[0].status?.type || {};
+    if (/postpon|cancel/i.test(st.name || '')) return { result: 'void' };
+    if (!st.completed) return { result: 'pending' };
+    const hs = +ev.h.score, as = +ev.a.score;
+    const cmp = (v, line) => v > line ? 'won' : v < line ? 'lost' : 'push';
+    if (leg.type === 'line') {
+      if (leg.market === 'totals') { const r = cmp(hs + as, leg.point); return { result: /^over/i.test(leg.pick) ? r : r === 'won' ? 'lost' : r === 'lost' ? 'won' : r, actual: `${hs + as} total` }; }
+      const final = `${ev.a.team.abbreviation} ${as} – ${ev.h.team.abbreviation} ${hs}`;
+      if (leg.team === 'Draw') return { result: hs === as ? 'won' : 'lost', actual: final };
+      const isHome = norm(leg.team) === norm(leg.home), mine = isHome ? hs : as, theirs = isHome ? as : hs;
+      return { result: cmp(mine - theirs + (leg.market === 'spreads' ? leg.point : 0), 0), actual: final };
+    }
+    const sum = await getJSON(`${base}/summary?event=${ev.e.id}`);
+    const row = boxRows(sum)[normName(leg.player)];
+    if (!row || row._dnp) return { result: 'void', actual: 'did not play' };
+    const v = statVal(row, leg.market);
+    if (v == null) return { result: 'ungraded' };
+    const r = cmp(v, leg.point);
+    return { result: leg.side === 'Over' ? r : r === 'won' ? 'lost' : r === 'lost' ? 'won' : r, actual: `${v} ${PROP_STATS[leg.market]?.label || ''}`.trim() };
+  }
+  function parlayResult(legs) {
+    const rs = legs.map(l => l.result || 'pending');
+    if (rs.includes('lost')) return 'lost';
+    if (rs.some(r => r === 'pending' || r === 'ungraded')) return 'pending';
+    return rs.includes('won') ? 'won' : 'push';
+  }
+  const SNAP = ['id', 'type', 'sport', 'lg', 'emoji', 'eventId', 'game', 'home', 'away', 'team', 'market', 'point', 'pick', 'player', 'side',
+    'statLabel', 'dec', 'book', 'fairP', 'ev', 'start', 'headshot'];
+  const snap = x => ({ ...Object.fromEntries(SNAP.filter(k => x[k] != null).map(k => [k, x[k]])), vibe: x.vibe?.score ?? 0,
+    hit: x.vibe?.hit ? { hits: x.vibe.hit.hits, n: x.vibe.hit.n } : undefined, result: 'pending' });
+
+  // Grade finished picks, then record today's Pick/Parlay of the Day (replaced on re-runs until its first game starts).
+  async function updateHistory(history, card, get, log = () => {}) {
+    const cache = {}, getJSON = url => cache[url] ||= get(url).then(r => r.json).catch(() => null), now = Date.now();
+    for (const h of history) {
+      const legs = [h.potd, ...(h.parlay?.legs || [])].filter(Boolean);
+      for (const l of legs) if ((l.result === 'pending' || !l.result) && new Date(l.start) < now - 3.5 * 36e5) {
+        Object.assign(l, await gradeLeg(l, getJSON).catch(() => ({ result: 'pending' })));
+        if (l.result === 'pending' && now - new Date(l.start) > 4 * 864e5) l.result = 'ungraded';
+      }
+      if (h.parlay) h.parlay.result = parlayResult(h.parlay.legs);
+    }
+    const byId = Object.fromEntries([...card.lines, ...card.props].map(x => [x.id, x]));
+    const potd = byId[card.potd], par = card.potdParlay;
+    if (potd || par) {
+      const date = etDate(card.generatedAt);
+      const entry = { date, potd: potd ? snap(potd) : null,
+        parlay: par ? { legs: par.legs.map(id => snap(byId[id])), dec: par.dec, p: par.p, ev: par.ev, result: 'pending' } : null };
+      const i = history.findIndex(h => h.date === date);
+      const started = h => [h.potd, ...(h.parlay?.legs || [])].some(l => l && new Date(l.start) < now);
+      if (i < 0) history.push(entry);
+      else if (!started(history[i])) history[i] = entry;
+    }
+    history.sort((a, b) => b.date.localeCompare(a.date));
+    log(`history: ${history.length} days`);
+    return history;
+  }
+
   const Engine = { SPORTS, PROP_STATS, STALE, PROP_STALE, toDec, toAm, pct, esc, devig, norm, normName,
     legsFromEvents, propsFromEvent, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
-    parlayStats, buildParlays, parlayPool, buildCard, analyzeCard };
+    parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
+    pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult };
   root.Engine = Engine;
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -19,11 +19,20 @@ const get = async url => {
 
 (async () => {
   const out = path.join(__dirname, '..', 'data'), file = path.join(out, 'latest.js');
+  const hfile = path.join(out, 'history.js');
+  async function saveHistory(card) {
+    global.window = global.window || {};
+    let history = [];
+    if (fs.existsSync(hfile)) { delete require.cache[hfile]; require(hfile); history = window.EDGE_HISTORY || []; }
+    await Engine.updateHistory(history, card, get, m => console.log('·', m));
+    fs.writeFileSync(hfile, 'window.EDGE_HISTORY = ' + JSON.stringify(history) + ';\n');
+  }
   if (args.includes('--reanalyze')) {
     // re-run the free ESPN analysis on the saved card without spending odds credits
     global.window = {}; require(file);
     const card = await Engine.analyzeCard(window.EDGE_CARD, get, m => console.log('·', m));
     fs.writeFileSync(file, 'window.EDGE_CARD = ' + JSON.stringify(card) + ';\n');
+    await saveHistory(card);
     return console.log('re-analyzed data/latest.js');
   }
   const card = await Engine.buildCard({
@@ -34,5 +43,6 @@ const get = async url => {
   });
   fs.mkdirSync(out, { recursive: true });
   fs.writeFileSync(path.join(out, 'latest.js'), 'window.EDGE_CARD = ' + JSON.stringify(card) + ';\n');
+  await saveHistory(card);
   console.log(`wrote data/latest.js (${(fs.statSync(path.join(out, 'latest.js')).size / 1024).toFixed(0)} KB)`);
 })().catch(e => { console.error(e); process.exit(1); });

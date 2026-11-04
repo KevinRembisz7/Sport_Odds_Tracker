@@ -8,6 +8,10 @@ Daily +EV sports picks, **player props** and parlays. Every price is checked aga
 - **Hit rates**: each player's recent ESPN game log compared to tonight's line.
 - **Vibe score**: ESPN's win model vs the market, injuries (whose absence opens up whose matchup), teammates out (who picks up the extra usage), form and a scoring projection.
 - **Auto-built parlays**: Safe-ish, Value and Lotto, max one leg per game, no 🔴 fades. There's also a build-your-own tab.
+- **⭐ Pick of the Day**: the single best bet. It needs a 1.5–12% edge and matchup backing, and is ranked by edge × √(win chance), boosted by vibe and hit rate.
+- **🎯 Parlay of the Day**: the +EV parlay most likely to hit. Every leg is ≥50% to win on its own, with one leg per game.
+- **📈 Track record**: both picks are saved to `data/history.js` and graded from the ESPN final box scores on the next morning's run. The record shows W-L, units (1u flat) and actual vs expected hit rate.
+- **📋 bet365 sheet**: The Odds API doesn't carry bet365, so the card ships fair odds for every line and prop. You type in bet365's price and the app computes your edge.
 
 ## Files
 | File | What it does |
@@ -16,6 +20,7 @@ Daily +EV sports picks, **player props** and parlays. Every price is checked aga
 | `engine.js` | Shared odds math, ESPN analysis and the `buildCard` pipeline (runs in Node and the browser). |
 | `scripts/build.js` | Daily build → `data/latest.js` |
 | `data/latest.js` | Today's card (committed by the daily job) |
+| `data/history.js` | Every Pick/Parlay of the Day and its graded result |
 | `../.github/workflows/daily-card.yml` | Every morning at 8:23 AM ET: build, commit, deploy to Pages |
 
 ## Setup (one time)

@@ -123,6 +123,19 @@
   .b365 b { color: var(--edge); }
   .pin { width: 96px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font-size: 13px; font-weight: 700; text-align: center; }
   .pin:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .hero2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 6px 0 4px; }
+  @media (max-width: 860px) { .hero2 { grid-template-columns: 1fr; } }
+  .hero2 > div { display: flex; flex-direction: column; gap: 8px; }
+  .hero2 .card, .hero2 .parlay { flex: 1; box-shadow: var(--glow); }
+  .ribbon { align-self: flex-start; font-size: 12px; font-weight: 900; letter-spacing: .08em; padding: 5px 12px; border-radius: 999px; color: #1a1300;
+    background: linear-gradient(90deg, #ffd34d, #ffb547); }
+  .ribbon.alt { color: #04130c; background: linear-gradient(90deg, var(--edge), #7ef0c4); }
+  .dots2 { margin-top: 8px; display: flex; gap: 4px; flex-wrap: wrap; }
+  .rd { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 900; background: var(--chip); color: var(--muted); }
+  .rd.won { background: var(--edge); color: #04130c; } .rd.lost { background: var(--bad); color: #fff; }
+  .res { font-weight: 800; font-size: 12px; white-space: nowrap; }
+  .res.won { color: var(--edge); } .res.lost { color: var(--bad); } .res.pending { color: var(--warn); }
+  .sec a { color: var(--accent); text-decoration: none; font-weight: 700; }
   .howto { background: var(--edgebg); border-radius: 12px; padding: 10px 14px; font-size: 13.5px; margin-bottom: 12px; }
 
   /* section heads */
@@ -245,6 +258,7 @@
 
 <script src="engine.js"></script>
 <script src="data/latest.js" onerror="window.EDGE_CARD = null"></script>
+<script src="data/history.js" onerror="window.EDGE_HISTORY = []"></script>
 <script src="app.js"></script>
 </body>
 </html>
