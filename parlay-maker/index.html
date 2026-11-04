@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Edge Lab</title>
+<meta name="author" content="Kevin Rembisz">
 <meta name="description" content="Daily +EV sports picks, player props and parlays, priced against the sharp no-vig line.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -230,13 +231,16 @@
   .flow .step small { display: block; color: var(--muted); font-weight: 500; }
   .flow .arr { color: var(--accent); font-weight: 900; }
   code { background: var(--chip); padding: 1px 6px; border-radius: 6px; font-size: 12.5px; }
+  .byline { font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--muted); margin-top: -2px; }
+  .madeby { font-size: 14px; color: var(--ink); margin-bottom: 6px; }
+  .madeby b { background: linear-gradient(90deg, var(--edge), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
   footer { color: var(--muted); font-size: 12px; text-align: center; padding: 30px 0 10px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header class="top">
-    <div class="brand"><div class="bolt">⚡</div>EDGE<span class="lab">LAB</span></div>
+    <div class="brand"><div class="bolt">⚡</div><div>EDGE <span class="lab">LAB</span><div class="byline">made by Kevin Rembisz</div></div></div>
     <div class="meta" id="meta">Loading today's card…</div>
     <button class="btn" id="liveBtn">↻ Live refresh</button>
     <button class="btn" id="setBtn" aria-label="Settings">⚙️</button>
@@ -252,7 +256,7 @@
   <div class="filters" id="filters"></div>
   <main id="view"></main>
 
-  <footer>Odds: The Odds API · Stats &amp; injuries: ESPN · Not betting advice. No edge is a guarantee — bet small, bet what you can lose. Problem? 1-800-GAMBLER.</footer>
+  <footer><div class="madeby">⚡ Made by <b>Kevin Rembisz</b></div>Odds: The Odds API · Stats &amp; injuries: ESPN · Not betting advice. No edge is a guarantee — bet small, bet what you can lose. Problem? 1-800-GAMBLER.</footer>
 </div>
 
 <div class="slipbar hide" id="slipbar"></div>

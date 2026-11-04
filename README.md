@@ -1,5 +1,7 @@
 # 🎯 Sport Odds Tracker
 
+_Made by Kevin Rembisz_
+
 **Live site → https://kevinrembisz7.github.io/Sport_Odds_Tracker/parlay-maker/**
 
 Daily +EV sports picks, player props and parlays. Every price is checked against the sharp no-vig line and backed by injuries, hit rates and matchup stats. It rebuilds itself every morning via GitHub Actions and publishes to GitHub Pages.
