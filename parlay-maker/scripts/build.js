@@ -27,9 +27,18 @@ const get = async (url, extraHeaders = {}) => {
     await Engine.updateHistory(history, card, get, m => console.log('·', m));
     fs.writeFileSync(hfile, 'window.EDGE_HISTORY = ' + JSON.stringify(history) + ';\n');
   }
+  // backup schedule runs: if today's (Eastern) card already exists, only do the free refresh
+  if (args.includes('--skip-if-fresh') && fs.existsSync(file)) {
+    global.window = {}; require(file);
+    const et = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(d));
+    if (window.EDGE_CARD && et(window.EDGE_CARD.generatedAt) === et(Date.now())) {
+      console.log('· today\'s card already built — free refresh only (no Odds API credits)');
+      args.push('--reanalyze');
+    }
+  }
   if (args.includes('--reanalyze')) {
     // re-run the free ESPN analysis on the saved card without spending odds credits
-    global.window = {}; require(file);
+    global.window = {}; delete require.cache[require.resolve(file)]; require(file);
     const card = await Engine.analyzeCard(window.EDGE_CARD, get, m => console.log('·', m), { apiFootballKey: process.env.API_FOOTBALL_KEY });
     fs.writeFileSync(file, 'window.EDGE_CARD = ' + JSON.stringify(card) + ';\n');
     await saveHistory(card);
