@@ -70,8 +70,9 @@
     if (t?.logo) return `<div class="avatar logo ${cls}"><img src="${esc(t.logo)}" alt="" loading="lazy" onerror="this.remove()"></div>`;
     return `<div class="avatar ${cls}">${x.emoji || '🎲'}</div>`;
   }
+  const propLabel = x => x.alt && x.side === 'Over' ? `${Math.floor(x.point) + 1}+ ${x.statLabel} · ladder` : `${x.side} ${x.point} ${x.statLabel}${x.alt ? ' · alt' : ''}`;
   function titleOf(x) {
-    if (x.type === 'prop') return { n: x.player, p: `${x.side} ${x.point} ${x.statLabel}`, g: `${x.team || ''}${x.opp ? ' vs ' + x.opp : ''} · ${x.game}` };
+    if (x.type === 'prop') return { n: x.player, p: propLabel(x), g: `${x.team || ''}${x.opp ? ' vs ' + x.opp : ''} · ${x.game}` };
     if (x.market === 'totals') return { n: x.game, p: x.pick, g: 'Game total' };
     const g = gameOf(x), t = teamSide(x);
     const sub = (x.market === 'h2h' ? 'Moneyline' : `Spread ${x.point > 0 ? '+' : ''}${x.point}`) + (x.alt ? ' · alt line' : '');
@@ -339,8 +340,9 @@
   const SECTIONS = [
     ['totals', '📈 Over/Unders', x => x.type === 'line' && x.market === 'totals' && !x.alt],
     ['sides', '📏 Spreads & ML', x => x.type === 'line' && x.market !== 'totals' && !x.alt],
-    ['alts', '🔀 Alt lines', x => x.alt],
-    ['props', '🎯 Prop picks', x => x.type === 'prop'],
+    ['alts', '🔀 Alt lines', x => x.alt && x.type === 'line'],
+    ['ladders', '🪜 Alt props', x => x.alt && x.type === 'prop'],
+    ['props', '🎯 Prop picks', x => x.type === 'prop' && !x.alt],
     ['players', '🧍 Player picks', x => x.type === 'prop'],
   ];
   function sportSections(items, renderList) {
@@ -358,7 +360,7 @@
       <div class="c-top"><span class="tag">${top.emoji} ${esc(top.lg)}</span><span>${esc(fmtTime(top.start))}</span><span class="spacer"></span><span class="tag">${ps.length} play${ps.length > 1 ? 's' : ''}</span></div>
       <div class="c-main">${avatar(top)}<div class="c-title"><div class="n">${esc(name)}</div><div class="g">${esc(t.g)}</div></div></div>
       ${ps.map((x, i) => `<div class="prow ${i === 0 ? 'best' : ''}" data-open="${esc(x.id)}">
-        <div class="t"><b>${i === 0 ? '⭐ ' : ''}${esc(x.side)} ${x.point} ${esc(x.statLabel)}</b>
+        <div class="t"><b>${i === 0 ? '⭐ ' : ''}${esc(propLabel(x))}</b>
           <span class="muted">${toAm(x.dec)} ${esc(x.book)}${x.vibe?.hit ? ` · hit ${x.vibe.hit.hits}/${x.vibe.hit.n}` : ''}${B365() ? ` · bet365 ≥ ${targetAm(x)}` : ''}</span></div>
         <span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)}</span>
         <button class="add ${S.slip.includes(x.id) ? 'in' : ''}" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓' : '+'}</button></div>`).join('')}
@@ -377,7 +379,7 @@
       body = list.length ? `<div class="grid">${list.map(([n, ps]) => playerCard(n, ps)).join('')}</div>` : empty('No player picks match these filters.');
     } else {
       body = items.length ? sportSections(items, xs => `<div class="grid">${xs.map(x => pickCard_(x)).join('')}</div>`)
-        : empty(key === 'alts' ? 'No +EV alt lines on today’s card. Alt lines cost 2 credits per game, so they only get pulled when the day’s budget has room (mostly weekends on the free plan), and most come out priced fair.' : 'Nothing +EV in this section with these filters.');
+        : empty(key === 'ladders' ? 'No +EV alt props (ladders like 10+ PTS / 3+ AST) on today\u2019s card. Ladders get pulled for the games we already have props for, when the day\u2019s budget has room, and model-priced rungs need a 5% edge to show.' : key === 'alts' ? 'No +EV alt lines on today’s card. Alt lines cost 2 credits per game, so they only get pulled when the day’s budget has room (mostly weekends on the free plan), and most come out priced fair.' : 'Nothing +EV in this section with these filters.');
     }
     return `<div class="sec"><h2>🗂️ Bet Board</h2><span>every +EV bet on today's card, organized by type</span></div>
       <div class="seg">${SECTIONS.map(([k, l]) => `<button class="${k === key ? 'on' : ''}" data-section="${k}">${l} <span>${counts[k]}</span></button>`).join('')}</div>

@@ -105,7 +105,7 @@
     const S = SPORTS[sport] || {}, out = [];
     const groups = {}; // market|player|point -> {book: {Over, Under, title}}
     for (const b of ev.bookmakers || []) for (const m of b.markets || []) for (const o of m.outcomes || []) {
-      if (o.point == null || !o.description || !/^(over|under)$/i.test(o.name)) continue;
+      if (o.point == null || !o.description || !/^(over|under)$/i.test(o.name) || m.key.endsWith('_alternate')) continue;
       const k = `${m.key}|${o.description}|${o.point}`;
       const g = groups[k] ||= {};
       (g[b.key] ||= { title: b.title })[o.name.toLowerCase()] = toDec(o.price);
@@ -126,6 +126,80 @@
           game: `${ev.away_team} @ ${ev.home_team}`, home: ev.home_team, away: ev.away_team, start: ev.commence_time,
           player, market, point: +point, side: Side, statLabel: label, pick: `${player} ${Side} ${point} ${label}`,
           prices, fairP, src, nBooks: pairs.length });
+      }
+    }
+    return out;
+  }
+
+  // ---------------- alt player props (ladders: 10+ pts, 3+ ast, 7+ reb …) ----------------
+  const ALT_PROP = {
+    player_points: 'player_points_alternate', player_rebounds: 'player_rebounds_alternate', player_assists: 'player_assists_alternate',
+    player_threes: 'player_threes_alternate', player_points_rebounds_assists: 'player_points_rebounds_assists_alternate',
+    player_pass_yds: 'player_pass_yds_alternate', player_rush_yds: 'player_rush_yds_alternate',
+    player_reception_yds: 'player_reception_yds_alternate', player_receptions: 'player_receptions_alternate',
+    player_shots_on_goal: 'player_shots_on_goal_alternate',
+  };
+  // Big, smooth stats → normal; small counts → negative binomial (streakier than Poisson, r = 8).
+  const NORMAL_SD = {
+    // spread grows with the mean but slower than it: ~±5 for a 12-pt bench guy, ~±8 for a 31-pt star
+    player_points: m => 2.5 + 0.18 * m, player_points_rebounds_assists: m => 3 + 0.17 * m,
+    player_pass_yds: m => 25 + 0.2 * m, player_rush_yds: m => 8 + 0.35 * m, player_reception_yds: m => 8 + 0.45 * m,
+  };
+  const erf = x => { const t = 1 / (1 + 0.3275911 * Math.abs(x)), y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y; };
+  const normTail = (mu, sd, L) => 0.5 * (1 - erf((L - mu) / (sd * Math.SQRT2)));
+  function nbTail(mu, L, r = 8) { // P(X > L), X ~ NegBin(mean mu, size r)
+    const k = Math.floor(L) + 1, q = mu / (r + mu);
+    let pmf = Math.pow(r / (r + mu), r), cdf = 0;
+    for (let i = 0; i < k; i++) { cdf += pmf; pmf *= (i + r) / (i + 1) * q; }
+    return Math.max(0, 1 - cdf);
+  }
+  function ladderModel(market, mainPoint, fairOver) {
+    const sdf = NORMAL_SD[market];
+    const tail = (mu, L) => sdf ? normTail(mu, sdf(mu), L) : nbTail(mu, L);
+    let lo = 0.01, hi = Math.max(5, mainPoint * 4);
+    for (let n = 0; n < 60; n++) { const mid = (lo + hi) / 2; tail(mid, mainPoint) < fairOver ? lo = mid : hi = mid; }
+    const mu = (lo + hi) / 2;
+    return L => tail(mu, L);
+  }
+  function altPropsFromEvent(ev, sport, mainProps) {
+    const S = SPORTS[sport] || {}, out = [], main = {}, groups = {};
+    for (const p of mainProps) if (p.side === 'Over') main[`${p.market}|${p.player}`] = { point: p.point, fairOver: p.fairP };
+    const base = Object.fromEntries(Object.entries(ALT_PROP).map(([b, a]) => [a, b]));
+    for (const b of ev.bookmakers || []) for (const m of b.markets || []) {
+      const bm = base[m.key]; if (!bm) continue;
+      for (const o of m.outcomes || []) {
+        if (o.point == null || !o.description || !/^(over|under)$/i.test(o.name)) continue;
+        const g = groups[`${bm}|${o.description}|${o.point}`] ||= {}, side = o.name.toLowerCase(), d = toDec(o.price);
+        const bk = g[b.key] ||= { title: b.title };
+        if (!bk[side] || d > bk[side]) bk[side] = d; // some books list a rung twice — keep the better price
+      }
+    }
+    const models = {};
+    for (const [k, books] of Object.entries(groups)) {
+      const [market, player, pt] = k.split('|'), point = +pt, mk = main[`${market}|${player}`];
+      if (mk && mk.point === point) continue; // that's just the main line
+      const pairs = Object.entries(books).filter(([, v]) => v.over && v.under);
+      let fairOver, src;
+      if (pairs.length >= 3) { fairOver = median(pairs.map(([, v]) => devig([v.over, v.under])[0])); src = `Consensus of ${pairs.length}`; }
+      else if (mk) {
+        const model = (models[market + player] ||= ladderModel(market, mk.point, mk.fairOver))(point);
+        const overs = Object.values(books).filter(v => v.over).map(v => 1 / v.over);
+        if (overs.length >= 3) { fairOver = (model + Math.min(0.99, median(overs) / 1.07)) / 2; src = `Model + ${overs.length}-book ladder`; }
+        else { fairOver = model; src = 'Model from main line'; }
+      } else continue;
+      if (fairOver < 0.05 || fairOver > 0.97) continue;
+      // model-only rungs (no other book posts that number): stay in the 10–85% zone where small model errors don't blow up EV
+      if (src === 'Model from main line' && (fairOver < 0.1 || fairOver > 0.85)) continue;
+      const label = PROP_STATS[market]?.label || market;
+      for (const side of ['over', 'under']) {
+        const prices = Object.entries(books).filter(([, v]) => v[side]).map(([bk, v]) => ({ key: bk, title: v.title, dec: v[side] }));
+        if (!prices.length) continue;
+        const Side = side === 'over' ? 'Over' : 'Under';
+        out.push({ type: 'prop', alt: true, model: !src.startsWith('Consensus'), id: `${ev.id}|alt|${k}|${side}`, eventId: ev.id, sport, lg: S.lg || sport, emoji: S.emoji || '🎲',
+          game: `${ev.away_team} @ ${ev.home_team}`, home: ev.home_team, away: ev.away_team, start: ev.commence_time,
+          player, market, point, side: Side, statLabel: label,
+          pick: side === 'over' ? `${player} ${Math.floor(point) + 1}+ ${label}` : `${player} Under ${point} ${label} (alt)`,
+          prices, fairP: side === 'over' ? fairOver : 1 - fairOver, src, nBooks: Object.keys(books).length, minEdge: src === 'Model from main line' ? 0.05 : src.startsWith('Model') ? 0.03 : 0.01 });
       }
     }
     return out;
@@ -507,6 +581,7 @@
 
     // props for games starting soon, soonest first, until the budget runs out
     let props = [];
+    const propGames = [];
     const soon = Object.values(events).filter(e => SPORTS[e.sport].props && new Date(e.commence_time) - now < propWindowH * 36e5)
       .sort((a, b) => SPORTS[a.sport].pri - SPORTS[b.sport].pri || a.commence_time.localeCompare(b.commence_time));
     for (const e of soon) {
@@ -515,9 +590,21 @@
       if (mk.length < 2) continue;
       try {
         const r = await odds(`/sports/${e.sport}/events/${e.id}/odds?bookmakers=${BOOKS}&markets=${mk.join(',')}&oddsFormat=american`); track(r.headers);
-        props.push(...propsFromEvent(r.json, e.sport));
+        props.push(...propsFromEvent(r.json, e.sport)); propGames.push(e);
       } catch (err) { log(`props ${e.id} failed: ${err.message}`); }
     }
+    // alt player props (ladders) for games we have main lines for — the main line calibrates the model
+    let ladderGames = 0;
+    for (const e of propGames) {
+      if (ladderGames >= 3) break;
+      const mk = SPORTS[e.sport].props.map(m => ALT_PROP[m]).filter(Boolean).slice(0, Math.max(0, B - used));
+      if (!mk.length) break;
+      try {
+        const r = await odds(`/sports/${e.sport}/events/${e.id}/odds?bookmakers=${BOOKS}&markets=${mk.join(',')}&oddsFormat=american`); track(r.headers);
+        props.push(...altPropsFromEvent(r.json, e.sport, props.filter(p => p.eventId === e.id && !p.alt))); ladderGames++;
+      } catch (err) { log(`ladders ${e.id} failed: ${err.message}`); }
+    }
+    if (ladderGames) log(`alt player props (ladders) for ${ladderGames} games`);
     log(`props pulled for ${new Set(props.map(p => p.eventId)).size} games, ${props.length} prop sides`);
     // alt spreads/totals for the soonest big-league games if there's room (2 credits per game)
     let altGames = 0;
@@ -552,7 +639,7 @@
       'player', 'side', 'statLabel', 'fairP', 'src', 'start'];
     card.board = [...lines, ...props].map(x => Object.fromEntries(keep.filter(k => x[k] != null).map(k => [k, x[k]])));
     lines = lines.filter(l => l.dec && l.ev >= 0.005).sort((a, b) => b.ev - a.ev).slice(0, maxLines);
-    props = props.filter(p => p.dec && p.ev >= 0.01).sort((a, b) => b.ev - a.ev).slice(0, maxProps);
+    props = props.filter(p => p.dec && p.ev >= (p.minEdge ?? 0.01)).sort((a, b) => b.ev - a.ev).slice(0, maxProps);
 
     card.lines = lines; card.props = props;
     card.credits = { left, used };
@@ -756,7 +843,7 @@
   }
 
   const Engine = { SPORTS, PROP_STATS, STALE, PROP_STALE, toDec, toAm, pct, esc, devig, norm, normName,
-    legsFromEvents, propsFromEvent, altsFromEvent, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
+    legsFromEvents, propsFromEvent, altsFromEvent, altPropsFromEvent, ladderModel, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
     parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
     pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult, liveStatus };
   root.Engine = Engine;

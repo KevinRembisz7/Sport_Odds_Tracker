@@ -11,6 +11,7 @@ Daily +EV sports picks, **player props** and parlays. Every price is checked aga
 - **⭐ Pick of the Day**: the single best bet. It needs a 1.5–12% edge and matchup backing, and is ranked by edge × √(win chance), boosted by vibe and hit rate.
 - **🎯 Parlay of the Day**: the +EV parlay most likely to hit. Every leg is ≥50% to win on its own, with one leg per game.
 - **📈 Track record**: both picks are saved to `data/history.js` and graded from the ESPN final box scores on the next morning's run. The record shows W-L, units (1u flat) and actual vs expected hit rate.
+- **🪜 Alt props (ladders)**: rungs like 10+ PTS, 3+ AST and 7+ REB. Books post these Over-only, so each rung is priced from the player's main line (no-vig) through a fitted distribution: normal for points and yards, negative binomial for small counts. When 3+ books post the same rung, that's blended with their vig-adjusted median. Model-only rungs must be 10–85% to hit and need a 5% edge; blended rungs need 3%. Checked against 107 multi-book rungs, the model sits within ~3 points of the market and leans slightly conservative.
 - **📋 bet365 sheet**: The Odds API doesn't carry bet365, so the card ships fair odds for every line and prop. You type in bet365's price and the app computes your edge.
 
 ## Files
