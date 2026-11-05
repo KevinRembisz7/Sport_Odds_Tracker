@@ -32,7 +32,7 @@
   const PROP_STATS = {
     player_points: { label: 'PTS', keys: ['PTS', 'points'] },
     player_rebounds: { label: 'REB', keys: ['REB', 'totalRebounds', 'rebounds'] },
-    player_assists: { label: 'AST', keys: ['AST', 'assists'] },
+    player_assists: { label: 'AST', keys: ['AST', 'assists', 'goalAssists'] },
     player_threes: { label: '3PM', keys: ['3PT', 'threePointFieldGoalsMade-threePointFieldGoalsAttempted'], made: true },
     player_points_rebounds_assists: { label: 'PRA', sum: ['player_points', 'player_rebounds', 'player_assists'] },
     player_pass_yds: { label: 'Pass Yds', keys: ['passingYards'] },
@@ -1009,11 +1009,13 @@
   const AF_LEAGUE = { soccer_epl: 39, soccer_uefa_champs_league: 2 };
   function makeApiFootball(key, get, cap = 60) {
     if (!key) return null;
-    let calls = 0; const cache = {};
+    let calls = 0, blocked = false; const cache = {};
     const af = path => cache[path] ||= (async () => {
-      if (calls >= cap) return null;
+      if (calls >= cap || blocked) return null;
       calls++;
       const r = await get(`https://v3.football.api-sports.io${path}`, { 'x-apisports-key': key });
+      // free plans can't read the current season ("try from 2022 to 2024") — stop instead of burning the daily quota
+      if (r.json?.errors && !Array.isArray(r.json.errors) && Object.keys(r.json.errors).length) { blocked = true; return null; }
       return r.json?.response ?? null;
     })().catch(() => null);
     const season = () => { const n = new Date(); return n.getUTCMonth() >= 6 ? n.getUTCFullYear() : n.getUTCFullYear() - 1; };

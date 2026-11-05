@@ -30,7 +30,7 @@ Daily +EV sports picks, **player props** and parlays. Every price is checked aga
 3. Merge to `main`. GitHub only runs scheduled workflows from the default branch.
 4. Optional: run it now from **Actions → Daily Edge Card → Run workflow**.
 5. Optional: set a repo variable `DAILY_BUDGET` to fix the credits spent per day.
-6. Optional: add a free `API_FOOTBALL_KEY` secret (from api-football.com, free plan) for soccer player stats and injuries. It's capped at 60 calls per run, inside the free 100/day.
+6. Optional: `API_FOOTBALL_KEY` (from api-football.com) adds soccer injury lists. **The free plan only covers seasons 2022–2024**, so it does nothing for the current season and switches itself off on the first plan error. It's only worth adding with a paid plan. Soccer hit rates (goals, assists, shots, shots on target) already come free from ESPN game logs.
 
 ## Credit budget (built to last the whole month)
 | Step | What it does |
