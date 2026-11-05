@@ -30,17 +30,28 @@ Daily +EV sports picks, **player props** and parlays. Every price is checked aga
 4. Optional: run it now from **Actions → Daily Edge Card → Run workflow**.
 5. Optional: set a repo variable `DAILY_BUDGET` to fix the credits spent per day.
 
-## Credit budget
-With the default `auto` budget, each run spends `credits left ÷ days left in the month`.
+## Credit budget (built to last the whole month)
+| Step | What it does |
+|---|---|
+| **Free schedule check first** | The Odds API's `/events` endpoint costs **0 credits**, so each run checks which sports actually have games in the next 30h and only buys odds for those. |
+| **Pace** | `(credits left − reserve) ÷ days left in the month`, re-calculated every run, so unused credits roll forward automatically. |
+| **Weekday weighting** | Sun ×1.4 (NFL) · Sat ×1.4 (college football) · Thu ×1.0 · Fri ×0.9 · Mon/Wed ×0.8 · Tue ×0.7. It averages out to the pace. |
+| **Reserve** | About 8% (max 40) is held back for your manual ↻ Live refreshes, so the daily build never takes the last credits. |
+| **Props fit the budget** | If a game's full prop menu doesn't fit, it buys the most popular markets first (points, rebounds, assists…). |
+| **Leftovers** | Any credits left after props go to lines for the next sports with games. |
 
-| Pull | Cost |
+| Cost | |
 |---|---|
 | Lines, per sport | ~3 credits (Pinnacle + 9 US books = one region) |
-| Props, per game | ~3–5 credits |
+| Props, per game | ~2–5 credits |
+| Live tracker | **0** (ESPN) |
+| Grading | **0** (ESPN) |
 
-**Free tier (500/mo):** about 15 credits a day. That covers lines for ~4 sports plus props for about 1–2 games.
+**Free tier (500/mo):** about 13 credits a day. Weekdays get lines for 2 sports plus props for a game; NFL Sundays get more.
 
-**$30/mo tier (20K):** about 650 credits a day. That covers every sport plus props for every game in the next 30 hours.
+**$30/mo tier (20K):** everything, every day.
+
+The ↻ Live refresh budget defaults to 8 credits; you can change it in ⚙️ Settings.
 
 ## Local
 ```bash

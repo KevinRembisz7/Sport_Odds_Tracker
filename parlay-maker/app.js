@@ -13,7 +13,7 @@
   const S = {
     tab: store.get('tab', 'top'), lg: 'ALL', market: 'ALL', q: '', sort: 'ev',
     slip: store.get('slip', []), bankroll: store.get('bankroll', 500), kfrac: store.get('kfrac', 0.25),
-    key: store.get('key', ''), budget: store.get('budget', 20), allBooks: store.get('allBooks', false),
+    key: store.get('key', ''), budget: store.get('budget2', 8), allBooks: store.get('allBooks', false),
     myBook: store.get('myBook', 'bet365'), prices: store.get('prices', {}), type: 'ALL', shown: 120,
   };
   const B365 = () => S.myBook === 'bet365';
@@ -431,7 +431,7 @@
     if (!card) { $('meta').innerHTML = 'No card yet — hit <b>↻ Live refresh</b> or run the daily build.'; return; }
     const d = new Date(card.generatedAt), age = (Date.now() - d) / 36e5;
     $('meta').innerHTML = `Card for <b>${d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}</b> · updated ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-      + (age > 26 ? ' <span class="sus">· stale, refresh</span>' : '') + (card.credits?.left != null ? ` · ${card.credits.left} API credits left` : '');
+      + (age > 26 ? ' <span class="sus">· stale, refresh</span>' : '') + (card.credits?.left != null ? ` · ${card.credits.left} API credits left` : '') + (card.creditPlan ? ` (~${card.creditPlan.perDay}/day pace)` : '');
   }
 
   function render() {
@@ -529,7 +529,8 @@
     openDrawer('⚙️ Settings', `<div class="form">
       <label>The Odds API key <input id="sKey" type="password" value="${esc(S.key)}" placeholder="free at the-odds-api.com"></label>
       <label>Credits per live refresh <input id="sBudget" type="number" min="3" value="${esc(S.budget)}"></label>
-      <p class="note">~3 credits per sport for lines, ~3–5 per game for props. Free tier = 500/month, shared with the daily build.</p>
+      <p class="note">~3 credits per sport with games today, ~3–5 per game for props. Sports with nothing on the schedule cost 0. Free tier = 500/month, shared with the daily build.</p>
+      ${card?.creditPlan ? `<div class="howto">🪙 <b>${card.creditPlan.left}</b> credits left · <b>${card.creditPlan.daysLeft}</b> days to go · daily pace <b>~${card.creditPlan.perDay}</b> · reserve for your refreshes <b>${card.creditPlan.reserve}</b>. The daily build spends more on big Saturdays and Sundays and less early in the week.</div>` : ''}
       <label>My sportsbook <select id="sMyBook"><option value="bet365">bet365 (I type in prices)</option><option value="best">Best price across US books</option></select></label>
       <label>Books I can bet <select id="sBooks"><option value="0">US books</option><option value="1" ${S.allBooks ? 'selected' : ''}>All books</option></select></label>
       <label>Bankroll ($) <input id="sBank" type="number" value="${esc(S.bankroll)}"></label>
@@ -543,7 +544,7 @@
   }
   async function liveRefresh() {
     if (!S.key) { openSettings(); return; }
-    openDrawer('↻ Live refresh', `<p class="note">Pulling fresh lines + props (budget ${S.budget} credits)…</p><div class="log" id="log"></div>`);
+    openDrawer('↻ Live refresh', `<p class="note">Pulling fresh lines + props for games in the next 30h (max ${S.budget} credits; change it in ⚙️ Settings)…</p><div class="log" id="log"></div>`);
     const log = m => { const el = $('log'); if (el) { el.textContent += m + '\n'; el.scrollTop = 1e9; } };
     const get = async url => { const r = await fetch(url); if (!r.ok) throw new Error(r.status + ''); return { json: await r.json(), headers: n => r.headers.get(n) }; };
     try {
@@ -578,9 +579,9 @@
       case 'clearSlip': S.slip = []; store.set('slip', []); render(); openSlip(); break;
       case 'dropLive': store.set('liveCard', null); try { localStorage.removeItem('edge.liveCard'); } catch (err) {} card = window.EDGE_CARD; index(); render(); closeAll(); break;
       case 'saveSet':
-        S.key = $('sKey').value.trim(); S.budget = Math.max(3, +$('sBudget').value || 20); S.allBooks = $('sBooks').value === '1';
+        S.key = $('sKey').value.trim(); S.budget = Math.max(3, +$('sBudget').value || 8); S.allBooks = $('sBooks').value === '1';
         S.bankroll = +$('sBank').value || 500; S.kfrac = +$('sKelly').value; S.myBook = $('sMyBook').value;
-        ['key', 'budget', 'allBooks', 'bankroll', 'kfrac', 'myBook'].forEach(k => store.set(k, S[k]));
+        ['key', 'allBooks', 'bankroll', 'kfrac', 'myBook'].forEach(k => store.set(k, S[k])); store.set('budget2', S.budget);
         store.set('theme', $('sTheme').value); applyTheme();
         if (card) { E.applyBooks([...card.lines, ...card.props], S.allBooks); Object.values(byId).forEach(x => delete x._orig); applyPrices(); }
         closeAll(); render(); break;

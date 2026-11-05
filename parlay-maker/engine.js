@@ -412,7 +412,7 @@
 
   // ---------------- daily pipeline ----------------
   async function buildCard(opts) {
-    const { get, key, budget = 'auto', log = () => {}, propWindowH = 30, allowAll = false, maxProps = 80, maxLines = 60 } = opts;
+    const { get, key, budget = 'auto', log = () => {}, propWindowH = 30, lineWindowH = 30, allowAll = false, maxProps = 80, maxLines = 60 } = opts;
     const odds = q => get(`https://api.the-odds-api.com/v4${q}${q.includes('?') ? '&' : '?'}apiKey=${encodeURIComponent(key)}`);
     let left = null, used = 0;
     const track = h => { const l = parseInt(h('x-requests-remaining')); if (!isNaN(l)) left = l; used += parseInt(h('x-requests-last')) || 0; };
@@ -427,20 +427,39 @@
     }
     sports.sort((a, b) => SPORTS[a].pri - SPORTS[b].pri);
 
+    // Budget: spread what's left over the rest of the month, keep a reserve for manual Live refreshes,
+    // and lean into the big slates (Sat college football, Sun NFL) while going light early in the week.
     const now = new Date(), daysLeft = Math.max(1, Math.ceil((Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1) - now) / 864e5));
-    let B = budget === 'auto' ? Math.floor((left ?? 0) / daysLeft) : +budget;
-    if (left != null) B = Math.min(B, left);
-    log(`credits left ${left}, ~${daysLeft} days left in month → budget ${B}`);
+    const DAY_WEIGHT = [1.4, 0.8, 0.7, 0.8, 1.0, 0.9, 1.4]; // Sun..Sat, averages 1.0
+    const dow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' })).getDay();
+    const reserve = Math.min(40, Math.floor((left ?? 0) * 0.08));
+    const perDay = Math.max(0, ((left ?? 0) - reserve) / daysLeft);
+    let B = budget === 'auto' ? Math.floor(perDay * DAY_WEIGHT[dow]) : +budget;
+    if (left != null) B = Math.max(0, Math.min(B, left - (budget === 'auto' ? reserve : 0)));
+    log(`credits left ${left}, ${daysLeft} days left, reserve ${reserve} → ~${perDay.toFixed(1)}/day pace, today x${DAY_WEIGHT[dow]} → budget ${B}`);
 
     const fairML = {}, events = {}, card = { generatedAt: now.toISOString(), budget: B, sports: [], games: {}, fairML };
+    card.creditPlan = { left, daysLeft, reserve, perDay: +perDay.toFixed(1), today: B };
+
+    // Free schedule check (the /events endpoint costs 0 credits): only buy odds for sports with games soon.
+    const soonCount = {};
+    for (const s of sports) {
+      try {
+        const r = await odds(`/sports/${s}/events`); track(r.headers);
+        soonCount[s] = r.json.filter(e => { const t = new Date(e.commence_time) - now; return t > 0 && t < lineWindowH * 36e5; }).length;
+      } catch (e) { soonCount[s] = 0; }
+    }
+    const withGames = sports.filter(s => soonCount[s] > 0);
+    log(`games in next ${lineWindowH}h: ${withGames.map(s => SPORTS[s].lg + ' ' + soonCount[s]).join(', ') || 'none'} (skipping ${sports.length - withGames.length} sports with nothing soon)`);
+
     let lines = [];
     const linesBudget = Math.max(Math.min(B, 6), Math.floor(B * 0.45));
-    for (const s of sports) {
+    for (const s of withGames) {
       const cost = SPORTS[s].lines.split(',').length;
       if (used + cost > linesBudget) continue;
       try {
         const r = await odds(`/sports/${s}/odds/?bookmakers=${BOOKS}&markets=${SPORTS[s].lines}&oddsFormat=american`); track(r.headers);
-        const evs = r.json.filter(e => new Date(e.commence_time) > now);
+        const evs = r.json.filter(e => { const t = new Date(e.commence_time) - now; return t > 0 && t < lineWindowH * 36e5; });
         evs.forEach(e => events[e.id] = { ...e, sport: s });
         lines.push(...legsFromEvents(evs, s, fairML));
         card.sports.push({ key: s, lg: SPORTS[s].lg, emoji: SPORTS[s].emoji, games: evs.length });
@@ -453,14 +472,29 @@
     const soon = Object.values(events).filter(e => SPORTS[e.sport].props && new Date(e.commence_time) - now < propWindowH * 36e5)
       .sort((a, b) => SPORTS[a.sport].pri - SPORTS[b.sport].pri || a.commence_time.localeCompare(b.commence_time));
     for (const e of soon) {
-      const mk = SPORTS[e.sport].props;
-      if (used + mk.length > B) continue;
+      // fit as many prop markets as the budget allows (most popular first), min 2
+      const mk = SPORTS[e.sport].props.slice(0, Math.max(0, B - used));
+      if (mk.length < 2) continue;
       try {
         const r = await odds(`/sports/${e.sport}/events/${e.id}/odds?bookmakers=${BOOKS}&markets=${mk.join(',')}&oddsFormat=american`); track(r.headers);
         props.push(...propsFromEvent(r.json, e.sport));
       } catch (err) { log(`props ${e.id} failed: ${err.message}`); }
     }
     log(`props pulled for ${new Set(props.map(p => p.eventId)).size} games, ${props.length} prop sides`);
+    // leftover budget (no props today, e.g.) goes to lines for the next-busiest sports we skipped
+    for (const s of withGames) {
+      if (card.sports.some(x => x.key === s)) continue;
+      const cost = SPORTS[s].lines.split(',').length;
+      if (used + cost > B) continue;
+      try {
+        const r = await odds(`/sports/${s}/odds/?bookmakers=${BOOKS}&markets=${SPORTS[s].lines}&oddsFormat=american`); track(r.headers);
+        const evs = r.json.filter(e => { const t = new Date(e.commence_time) - now; return t > 0 && t < lineWindowH * 36e5; });
+        evs.forEach(e => events[e.id] = { ...e, sport: s });
+        lines.push(...legsFromEvents(evs, s, fairML));
+        card.sports.push({ key: s, lg: SPORTS[s].lg, emoji: SPORTS[s].emoji, games: evs.length });
+        log(`${SPORTS[s].lg}: ${evs.length} games (leftover budget)`);
+      } catch (e) { log(`${s} lines failed: ${e.message}`); }
+    }
 
     applyBooks(lines, allowAll); applyBooks(props, allowAll);
     // Full fair-odds board (every line + prop, +EV or not) for people pricing a book we can't pull, e.g. bet365.
