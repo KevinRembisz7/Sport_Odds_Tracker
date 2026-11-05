@@ -410,14 +410,18 @@
     if (pos.length) return { x: pos[0], kind: 'ev' };
     // leans skip heavy favorites (risk $400 to win $100) and long shots — a lean should be a bet worth making
     const lean = ok.filter(x => (x.vibe?.score || 0) >= 2 && x.fairP >= 0.3 && x.fairP <= 0.78).sort((a, b) => (b.vibe.score - a.vibe.score) || (b.fairP - a.fairP));
-    return lean.length ? { x: lean[0], kind: 'lean' } : null;
+    if (lean.length) return { x: lean[0], kind: 'lean' };
+    // always show something: the best side on the data at a sane price (vibe, then closest to a coin flip+ at fair)
+    const sane = ok.filter(x => x.fairP >= 0.3 && x.fairP <= 0.78);
+    const pool = (sane.length ? sane : ok).sort((a, b) => ((b.vibe?.score || 0) - (a.vibe?.score || 0)) || ((b.ev ?? -1) - (a.ev ?? -1)) || (b.fairP - a.fairP));
+    return pool.length ? { x: pool[0], kind: 'slight' } : null;
   }
   function gameCell(x, label, star) {
     if (!x) return '<div class="gcell empty">—</div>';
     const pos = x.dec && x.ev >= 0.01 && !isSus(x);
     const vs = x.vibe?.score;
     return `<div class="gcell ${pos ? 'pos' : ''} ${star ? 'star ' + star : ''}" data-open="${esc(x.id)}">
-      ${star ? `<span class="gstar" title="${star === 'ev' ? '+EV pick' : 'Data lean (matchup vibe), not a price edge'}">⭐</span>` : ''}
+      ${star ? `<span class="gstar" title="${star === 'ev' ? '+EV pick' : star === 'lean' ? 'Data lean (matchup vibe), not a price edge' : 'Slight lean: best side on the data, weak'}">${star === 'slight' ? '☆' : '⭐'}</span>` : ''}
       <b>${esc(label)}</b>
       <span class="ghit">${pct(x.fairP, 0)} to hit${vs != null && vs !== 0 ? ` · <span class="${vs >= 2 ? 'good' : vs <= -2 ? 'bad' : ''}">${vs > 0 ? '+' : ''}${vs}</span>` : ''}</span>
       <span class="gp">${x.dec ? toAm(x.dec) : toAm(1 / x.fairP)}</span>
@@ -436,10 +440,10 @@
     let list = Object.values(games);
     for (const g of list) g.best = bestSide([...Object.values(g.ml), ...Object.values(g.sp), ...Object.values(g.tot)]);
     const allCount = list.length;
-    if (S.bestOnly) list = list.filter(g => g.best);
+    if (S.bestOnly) list = list.filter(g => g.best && g.best.kind !== 'slight');
     list.sort((a, b) => S.bestOnly ? ((b.best?.kind === 'ev') - (a.best?.kind === 'ev')) || ((b.best?.x.vibe?.score || 0) - (a.best?.x.vibe?.score || 0)) : 0);
     list.sort((a, b) => S.sort === 'sport' ? lgRank(a) - lgRank(b) || a.start.localeCompare(b.start) : a.start.localeCompare(b.start));
-    const toggle = `<div class="seg small"><button class="${S.bestOnly ? '' : 'on'}" data-best="0">🏟️ All games (${allCount})</button><button class="${S.bestOnly ? 'on' : ''}" data-best="1">⭐ Best plays only</button></div>`;
+    const toggle = `<div class="seg small"><button class="${S.bestOnly ? '' : 'on'}" data-best="0">🏟️ All games (${allCount})</button><button class="${S.bestOnly ? 'on' : ''}" data-best="1">⭐ Strong plays only</button></div>`;
     if (!list.length) return toggle + empty(S.bestOnly ? 'No ⭐ picks right now: no sharp +EV sides and no strong data leans.' : 'No game lines match these filters.');
     const ptxt = p => (p > 0 ? '+' : '') + p;
     const st = (g, x) => g.best && x && g.best.x.id === x.id ? g.best.kind : '';
@@ -452,9 +456,10 @@
     const card1 = g => {
       const gd = card.games?.[g.id], plus = [...Object.values(g.ml), ...Object.values(g.sp), ...Object.values(g.tot)].filter(x => x.dec && x.ev >= 0.01 && !isSus(x)).length;
       const b = g.best, why = b ? (b.x.vibe?.items || []).filter(i => i.tone === 'g').slice(0, 2) : [];
-      return `<article class="gcard ${b ? 'has-best' : ''}">
+      if (b?.kind === 'slight' && !why.length) why.push({ text: 'No strong signal either way: small stake or skip' });
+      return `<article class="gcard ${b && b.kind !== 'slight' ? 'has-best' : ''}">
         <div class="c-top"><span class="tag">${g.emoji} ${esc(g.lg)}</span><span>${esc(fmtTime(g.start))}</span><span class="spacer"></span>${plus ? `<span class="edge">${plus} +EV</span>` : ''}</div>
-        ${b ? `<div class="gpick ${b.kind}" data-open="${esc(b.x.id)}">⭐ ${b.kind === 'ev' ? 'Pick' : 'Lean'}: <b>${esc(b.x.pick.replace(/ \(alt\)$/, ''))}</b> ${b.x.dec ? toAm(b.x.dec) : ''} · ${pct(b.x.fairP, 0)} to hit${b.kind === 'ev' ? ` · <span class="good">${signPct(b.x.ev)}</span>` : ''}${b.x.vibe?.score ? ` · vibe ${b.x.vibe.score > 0 ? '+' : ''}${b.x.vibe.score}` : ''}
+        ${b ? `<div class="gpick ${b.kind}" data-open="${esc(b.x.id)}">${b.kind === 'slight' ? '☆ Slight lean' : b.kind === 'ev' ? '⭐ Pick' : '⭐ Lean'}: <b>${esc(b.x.pick.replace(/ \(alt\)$/, ''))}</b> ${b.x.dec ? toAm(b.x.dec) : ''} · ${pct(b.x.fairP, 0)} to hit${b.kind === 'ev' ? ` · <span class="good">${signPct(b.x.ev)}</span>` : ''}${b.x.vibe?.score ? ` · vibe ${b.x.vibe.score > 0 ? '+' : ''}${b.x.vibe.score}` : ''}
           ${why.length ? `<div class="gwhy">${why.map(i => i.text).join(' · ')}</div>` : ''}</div>` : ''}
         <div class="ghead"><span></span><span>Spread</span><span>Total</span><span>ML</span></div>
         ${row(g, g.away, gd?.away.logo, 'o')}
@@ -463,7 +468,7 @@
       </article>`;
     };
     const est = items.some(x => x.espnLine);
-    return toggle + `<p class="note" style="margin-top:-4px">⭐ <b>Pick</b> = a sharp +EV side. ⭐ <b>Lean</b> = no price edge, but the matchup data (vibe +2 or better) points that way. Each box: the line, hit %, vibe, best price, fair price${B365() ? ', your bet365 target' : ''}. Green = +EV. Tap a box for details or to add it to your slip.${est ? ' <b>*</b> = fair estimated from DraftKings (free via ESPN) for games we didn\u2019t buy sharp lines for: good for bet365 targets, not for spotting edges.' : ''}</p>`
+    return toggle + `<p class="note" style="margin-top:-4px">⭐ <b>Pick</b> = a sharp +EV side. ⭐ <b>Lean</b> = no price edge, but the matchup data (vibe +2 or better) points that way. ☆ <b>Slight lean</b> = the best side on the data, but the signal is weak. Each box: the line, hit %, vibe, best price, fair price${B365() ? ', your bet365 target' : ''}. Green = +EV. Tap a box for details or to add it to your slip.${est ? ' <b>*</b> = fair estimated from DraftKings (free via ESPN) for games we didn\u2019t buy sharp lines for: good for bet365 targets, not for spotting edges.' : ''}</p>`
       + sportSections(list, gs => `<div class="ggrid">${gs.map(card1).join('')}</div>`);
   }
   function viewBoard() {
