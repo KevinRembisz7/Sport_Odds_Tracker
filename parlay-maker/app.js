@@ -382,9 +382,10 @@
     return `<article class="card player">
       <div class="c-top"><span class="tag">${top.emoji} ${esc(top.lg)}</span><span>${esc(fmtTime(top.start))}</span><span class="spacer"></span><span class="tag">${ps.length} ${S.allPlayers ? 'line' : 'play'}${ps.length > 1 ? 's' : ''}</span></div>
       <div class="c-main">${avatar(top)}<div class="c-title"><div class="n">${esc(name)}</div><div class="g">${esc(t.g)}</div></div></div>
+      ${top.vibe?.hit?.vals ? `<div class="spark">${sparkSVG(top.vibe.hit, top.point)}<div><span class="hitrate">${top.vibe.hit.hits}/${top.vibe.hit.n}</span> ${esc(top.side.toLowerCase())} ${top.point} ${esc(top.statLabel)}<br>last ${top.vibe.hit.n} · avg ${top.vibe.hit.avg}</div></div>` : ''}
       ${ps.map((x, i) => `<div class="prow ${i === 0 ? 'best' : ''}" data-open="${esc(x.id)}">
         <div class="t"><b>${i === 0 ? '⭐ ' : ''}${esc(propLabel(x))}</b>
-          <span class="muted">${x.dec ? `${toAm(x.dec)} ${esc(x.book)}` : `fair ${toAm(1 / x.fairP)} · ${pct(x.fairP, 0)}`}${x.vibe?.hit ? ` · hit ${x.vibe.hit.hits}/${x.vibe.hit.n}` : ''}${B365() ? ` · bet365 ≥ ${targetAm(x)}` : ''}</span></div>
+          <span class="muted">${x.dec ? `${toAm(x.dec)} ${esc(x.book)}` : `fair ${toAm(1 / x.fairP)} · ${pct(x.fairP, 0)}`}${x.vibe?.hit ? ` · <b class="${x.vibe.hit.l10 >= 0.6 ? 'good' : x.vibe.hit.l10 <= 0.4 ? 'bad' : ''}" style="display:inline">hit ${x.vibe.hit.hits}/${x.vibe.hit.n}</b> · avg ${x.vibe.hit.avg}` : ''}${x.vibe?.score ? ` · vibe ${x.vibe.score > 0 ? '+' : ''}${x.vibe.score}` : ''}${B365() ? ` · bet365 ≥ ${targetAm(x)}` : ''}</span></div>
         ${x.dec && x.ev != null ? `<span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)}</span>` : '<span class="muted">—</span>'}
         ${x.dec ? `<button class="add ${S.slip.includes(x.id) ? 'in' : ''}" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓' : '+'}</button>` : ''}</div>`).join('')}
     </article>`;

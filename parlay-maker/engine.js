@@ -806,6 +806,36 @@
       const ex = await extraNotes(p, bd, { getJSON, get, fairML, af, kp }).catch(() => []);
       if (ex.length) { p.vibe.items.push(...ex); p.vibe.score = scoreOf(p.vibe.items); }
     });
+    // stats for EVERY player on the board (not just +EV props): team, headshot, recent hit rate vs each line, matchup notes.
+    // One roster + game-log lookup per player (ESPN, free); kept compact so the card stays small.
+    const boardProps = card.board.filter(x => x.type === 'prop');
+    const byPlayer = {};
+    for (const x of boardProps) (byPlayer[`${x.sport}|${x.eventId}|${normName(x.player)}`] ||= []).push(x);
+    const done = Object.fromEntries(props.map(p => [p.id, p]));
+    await mapLimit(Object.values(byPlayer), 6, async group => {
+      const p0 = group[0], known = group.map(x => done[x.id]).find(Boolean);
+      const bd = await espn.breakdown(p0);
+      let side = null, ath = null;
+      if (bd) {
+        card.games[p0.eventId] ||= bd;
+        for (const sd of ['home', 'away']) {
+          const ro = await espn.roster(p0.sport, bd[sd].id);
+          if (ro[normName(p0.player)]) { side = sd; ath = ro[normName(p0.player)]; break; }
+        }
+      }
+      const logs = ath ? await espn.gamelog(p0.sport, ath.id) : [];
+      for (const x of group) {
+        const k = done[x.id];
+        x.headshot = k?.headshot || ath?.headshot || '';
+        x.team = k?.team || (side ? bd[side].abbr : '');
+        if (side) x.opp = bd[side === 'home' ? 'away' : 'home'].abbr;
+        const v = k?.vibe || analyzeProp(x, logs, bd, side);
+        if (!k) v.items.push(...kalshiNote(x, kp));
+        v.score = scoreOf(v.items);
+        x.vibe = { score: v.score, items: v.items.slice(0, 3), hit: v.hit ? { hits: v.hit.hits, n: v.hit.n, h5: v.hit.h5, n5: v.hit.n5, avg: +v.hit.avg.toFixed(1), l10: +v.hit.l10.toFixed(2), vals: v.hit.vals } : undefined };
+      }
+    });
+    log(`player stats added for ${Object.keys(byPlayer).length} players on the board`);
     // vibe + extras for every board game line (not just +EV), compact, so every game shows a lean
     const boardLines = card.board.filter(x => x.type === 'line' && !x.alt && !x.vibe);
     await mapLimit(boardLines, 6, async x => {
