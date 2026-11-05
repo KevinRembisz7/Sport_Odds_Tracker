@@ -14,7 +14,7 @@
     tab: store.get('tab', 'top'), lg: 'ALL', market: 'ALL', q: '', sort: 'ev',
     slip: store.get('slip', []), bankroll: store.get('bankroll', 500), kfrac: store.get('kfrac', 0.25),
     key: store.get('key', ''), budget: store.get('budget2', 8), allBooks: store.get('allBooks', false),
-    unit: store.get('unit', 0),
+    unit: store.get('unit', 0), day: 'ALL', time: 'ALL', team: 'ALL',
     myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), allPlayers: store.get('allPlayers', false), bestOnly: store.get('bestOnly', false), prices: store.get('prices', {}), type: 'ALL', shown: 120,
   };
   const B365 = () => S.myBook === 'bet365';
@@ -138,10 +138,19 @@
     $('tabs').innerHTML = TABS.map(([k, l]) => [k, k === 'sheet' && B365() ? '📋 bet365 Sheet' : l]).map(([k, l]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
   }
   function leagues(items) { return ['ALL', ...new Set(items.map(x => x.lg))]; }
-  function filtered(items) {
+  const dayKey = iso => iso ? new Date(iso).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) : '';
+  const timeKey = iso => iso ? new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+  const teamsOf = x => [x.home, x.away].filter(t => t && t !== 'Draw');
+  // sport / stat / type / search only — used to build the day, time and team menus
+  function baseFiltered(items) {
     const q = E.norm(S.q);
     return items.filter(x => (S.lg === 'ALL' || x.lg === S.lg) && (S.market === 'ALL' || x.statLabel === S.market)
       && (S.type === 'ALL' || x.type === S.type) && (!q || E.norm(x.pick + ' ' + x.game).includes(q)));
+  }
+  function filtered(items) {
+    return baseFiltered(items).filter(x => (S.day === 'ALL' || dayKey(x.start) === S.day)
+      && (S.time === 'ALL' || timeKey(x.start) === S.time)
+      && (S.team === 'ALL' || teamsOf(x).includes(S.team)));
   }
   const LG_ORDER = ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'NHL', 'MLB', 'EPL', 'UCL', 'UEL', 'UECL', 'FA Cup', 'EFL Cup', 'LaLiga', 'SerieA', 'Bundesliga', 'Ligue1', 'MLS', 'ATP', 'WTA', 'MMA'];
   const lgRank = x => { const i = LG_ORDER.indexOf(x.lg); return i < 0 ? 99 : i; };
@@ -150,13 +159,30 @@
     const k = { ev: x => x.ev ?? -9, vibe: x => (x.vibe?.score || 0) + x.ev, hit: x => x.vibe?.hit?.l10 ?? -1, time: x => -new Date(x.start) }[S.sort] || (x => x.ev);
     return [...items].sort((a, b) => k(b) - k(a));
   }
+  function whenTeamMenus(items) {
+    const base = baseFiltered(items).filter(x => x.start);
+    const byStart = [...base].sort((a, b) => a.start.localeCompare(b.start));
+    const days = [...new Set(byStart.map(x => dayKey(x.start)))];
+    if (S.day !== 'ALL' && !days.includes(S.day)) S.day = 'ALL';
+    const inDay = byStart.filter(x => S.day === 'ALL' || dayKey(x.start) === S.day);
+    const times = [...new Set(inDay.map(x => (S.day === 'ALL' ? dayKey(x.start) + ' · ' : '') + timeKey(x.start)))];
+    const timeVal = t => t.includes(' · ') ? t.split(' · ')[1] : t;
+    if (S.time !== 'ALL' && !inDay.some(x => timeKey(x.start) === S.time)) S.time = 'ALL';
+    const inTime = inDay.filter(x => S.time === 'ALL' || timeKey(x.start) === S.time);
+    const teams = [...new Set(inTime.flatMap(teamsOf))].sort();
+    if (S.team !== 'ALL' && !teams.includes(S.team)) S.team = 'ALL';
+    const opt = (v, l, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`;
+    return `<select id="fDay" title="Day">${opt('ALL', '📅 All days', S.day)}${days.map(d => opt(d, d, S.day)).join('')}</select>
+      <select id="fTime" title="Game time">${opt('ALL', '🕐 All times', S.time)}${[...new Map(times.map(t => [timeVal(t), t])).entries()].map(([v, l]) => opt(v, l, S.time)).join('')}</select>
+      <select id="fTeam" title="Team">${opt('ALL', '🏟️ All teams', S.team)}${teams.map(t => opt(t, t, S.team)).join('')}</select>`;
+  }
   function renderFilters(items, opts = {}) {
     if (!items) { $('filters').innerHTML = ''; return; }
     const lg = leagues(items);
     const markets = opts.markets ? ['ALL', ...new Set(items.filter(x => S.lg === 'ALL' || x.lg === S.lg).map(x => x.statLabel))] : null;
     $('filters').innerHTML = lg.map(l => `<button class="chip ${S.lg === l ? 'on' : ''}" data-lg="${esc(l)}">${l === 'ALL' ? 'All' : esc(l)}</button>`).join('')
       + (markets && markets.length > 2 ? '<span style="width:8px"></span>' + markets.map(m => `<button class="chip ${S.market === m ? 'on' : ''}" data-mk="${esc(m)}">${m === 'ALL' ? 'All stats' : esc(m)}</button>`).join('') : '')
-      + `<span class="spacer"></span><input id="q" placeholder="Search team or player" value="${esc(S.q)}" size="18">
+      + `<span class="spacer"></span>${whenTeamMenus(items)}<input id="q" placeholder="Search team or player" value="${esc(S.q)}" size="18">
          ${opts.sheet ? '<select id="type"><option value="ALL">Lines + props</option><option value="line">Game lines</option><option value="prop">Player props</option></select>' : ''}
          <select id="sort"><option value="ev">Sort: Edge</option><option value="vibe">Sort: Vibe</option>${opts.markets ? '<option value="hit">Sort: Hit rate</option>' : ''}<option value="time">Sort: Start time</option><option value="sport">Sort: Sport</option></select>`;
     $('sort').value = S.sort;
@@ -807,7 +833,7 @@
     if (el.dataset.open) { openDetail(el.dataset.open); return; }
     if (el.dataset.allpGo) { S.allPlayers = el.dataset.allpGo === '1'; store.set('allPlayers', S.allPlayers); }
     if (el.dataset.tab) { e.preventDefault(); window.scrollTo({ top: 0 }); S.tab = el.dataset.tab; store.set('tab', S.tab); S.market = 'ALL'; render(); return; }
-    if (el.dataset.lg) { S.lg = el.dataset.lg; S.market = 'ALL'; render(); return; }
+    if (el.dataset.lg) { S.lg = el.dataset.lg; S.market = 'ALL'; S.team = 'ALL'; render(); return; }
     if (el.dataset.mk) { S.market = el.dataset.mk; render(); return; }
     if (el.dataset.best) { S.bestOnly = el.dataset.best === '1'; store.set('bestOnly', S.bestOnly); render(); return; }
     if (el.dataset.allp) { S.allPlayers = el.dataset.allp === '1'; store.set('allPlayers', S.allPlayers); S.shown = 120; render(); return; }
@@ -844,6 +870,9 @@
   document.addEventListener('change', e => {
     if (e.target.id === 'sort') { S.sort = e.target.value; render(); }
     if (e.target.id === 'type') { S.type = e.target.value; S.shown = 120; render(); }
+    if (e.target.id === 'fDay') { S.day = e.target.value; S.time = 'ALL'; S.shown = 120; render(); }
+    if (e.target.id === 'fTime') { S.time = e.target.value; S.shown = 120; render(); }
+    if (e.target.id === 'fTeam') { S.team = e.target.value; S.shown = 120; render(); }
     if (e.target.dataset?.price) { const id = e.target.dataset.price, open = $('modal').classList.contains('show'); setPrice(id, e.target.value); if (open) openDetail(id); }
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
