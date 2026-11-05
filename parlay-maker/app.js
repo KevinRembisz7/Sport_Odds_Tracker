@@ -14,6 +14,7 @@
     tab: store.get('tab', 'top'), lg: 'ALL', market: 'ALL', q: '', sort: 'ev',
     slip: store.get('slip', []), bankroll: store.get('bankroll', 500), kfrac: store.get('kfrac', 0.25),
     key: store.get('key', ''), budget: store.get('budget2', 8), allBooks: store.get('allBooks', false),
+    unit: store.get('unit', 0),
     myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), allPlayers: store.get('allPlayers', false), bestOnly: store.get('bestOnly', false), prices: store.get('prices', {}), type: 'ALL', shown: 120,
   };
   const B365 = () => S.myBook === 'bet365';
@@ -58,6 +59,24 @@
   const vibeCls = v => !v ? 'v-n' : v.score >= 2 ? 'v-g' : v.score <= -2 ? 'v-b' : 'v-n';
   const VIBE_HELP = 'Vibe = matchup score. +1 for each thing backing this bet (injuries, recent hit rate, ESPN model, form, scoring projection), −1 for each thing against it. 🟢 +2 or better · 🟡 mixed · 🔴 −2 or worse.';
   const vibeTxt = v => !v ? '—' : (v.score >= 2 ? '🟢 ' : v.score <= -2 ? '🔴 ' : '🟡 ') + (v.score > 0 ? '+' : '') + v.score;
+  // ---------- recommended units (1u = 1% of bankroll unless set in Settings) ----------
+  const unitSize = () => S.unit > 0 ? S.unit : Math.max(1, S.bankroll / 100);
+  function unitsFor(x) {
+    if (!x?.dec || x.ev == null) return null;
+    if (x.ev <= 0 || isSus(x)) return 0;
+    const b = x.dec - 1, kelly = Math.max(0, (b * x.fairP - (1 - x.fairP)) / b) * S.kfrac;
+    let u = kelly * S.bankroll / unitSize();
+    const v = x.vibe?.score || 0;
+    if (v <= -2) u *= 0.5; else if (v >= 2) u *= 1.15;
+    return Math.min(3, Math.max(0.25, Math.round(u * 4) / 4));
+  }
+  function unitsParlay(legs) {
+    const st = E.parlayStats(legs, S.kfrac);
+    if (st.ev <= 0) return 0;
+    return Math.min(1, Math.max(0.1, Math.round(st.f * S.bankroll / unitSize() * 10) / 10));
+  }
+  const unitsTxt = (u, short) => u == null ? '' : u === 0 ? '0u · skip' : `${u}u${short ? '' : ` · $${(u * unitSize()).toFixed(2)}`}`;
+  const unitsChip = u => u == null ? '' : `<span class="units ${u === 0 ? 'zero' : ''}" title="Recommended stake. 1 unit = $${unitSize().toFixed(2)} (1% of bankroll unless set in Settings)">💰 ${unitsTxt(u, true)}</span>`;
   const isSus = x => x.ev >= (x.type === 'prop' ? E.PROP_STALE : E.STALE);
   const gameOf = x => card.games?.[x.eventId];
   function teamSide(x) {
@@ -107,7 +126,7 @@
       ${hit ? `<div class="spark">${sparkSVG(hit, x.point)}<div><span class="hitrate">${hit.hits}/${hit.n}</span> ${x.side.toLowerCase()} last ${hit.n}<br>avg ${hit.avg.toFixed(1)} · line ${x.point}</div></div>` : ''}
       ${B365() ? `<div class="b365"><span>🎯 bet365 target <b>${targetAm(x)}</b> or better</span>${priceInput(x)}</div>` : ''}
       ${items.length ? `<ul class="why-mini">${items.map(i => `<li class="${i.tone}">${i.text}</li>`).join('')}</ul>` : ''}
-      <div class="c-foot"><span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)} EV</span>
+      <div class="c-foot"><span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)} EV</span>${unitsChip(unitsFor(x))}
         <span class="muted" style="font-size:12px">fair ${toAm(1 / x.fairP)}</span>${isSus(x) ? '<span class="sus">⚠ sus line</span>' : ''}
         <button class="add ${inSlip ? 'in' : ''}" data-add="${esc(x.id)}">${inSlip ? '✓ In slip' : '+ Slip'}</button></div>
     </article>`;
@@ -160,7 +179,7 @@
     const p = byId[card.potd], par = card.potdParlay;
     if (!p && !par) return '';
     const why = p ? [`<b>${signPct(p.ev)}</b> edge`, `<b>${pct(p.fairP, 0)}</b> to hit`, p.vibe ? `vibe <b>${p.vibe.score > 0 ? '+' : ''}${p.vibe.score}</b>` : '',
-      p.vibe?.hit ? `cleared <b>${p.vibe.hit.hits}/${p.vibe.hit.n}</b> recent games` : ''].filter(Boolean).join(' · ') : '';
+      p.vibe?.hit ? `cleared <b>${p.vibe.hit.hits}/${p.vibe.hit.n}</b> recent games` : '', `bet <b>${unitsTxt(unitsFor(p))}</b>`].filter(Boolean).join(' · ') : '';
     return `<div class="hero2">
       ${p ? `<div><div class="ribbon">⭐ PICK OF THE DAY</div>${pickCard_(p, true)}<p class="note">Why it's the pick: ${why}</p></div>` : ''}
       ${par ? `<div><div class="ribbon alt">🎯 PARLAY OF THE DAY · most likely to hit</div>${parlayCard({ name: 'Parlay of the Day', emoji: '🎯', blurb: `Every leg ${'≥'}50% to win on its own, all +EV, one per game`, legs: par.legs }, true)}</div>` : ''}
@@ -442,6 +461,7 @@
           ${row('<div class="gpick ev" style="cursor:default">⭐ Pick</div>', '<b>Sharp +EV.</b> The price beats the true odds. Your best bets.')}
           ${row('<div class="gpick lean" style="cursor:default">⭐ Lean</div>', '<b>Data lean.</b> No price edge, but the matchup (vibe +2 or better) points this way. Normal stake.')}
           ${row('<div class="gpick slight" style="cursor:default">☆ Slight lean</div>', '<b>Weak signal.</b> Best side on the data, nothing strong. Small stake or skip.')}
+          ${row('<span class="units">💰 1.25u</span>', 'Recommended stake. 1u = 1% of bankroll. ⭐ Pick: Kelly-sized (max 3u) · ⭐ Lean: 0.5u · ☆ Slight lean: 0.25u')}
           <h4 style="margin-top:12px">Box outlines</h4>
           ${row(cell('star ev', '<span class="gstar">⭐</span><b>O 6.5</b>'), 'Gold outline = the ⭐ Pick or Lean for this game')}
           ${row(cell('star slight', '<span class="gstar">☆</span><b>+1.5</b>'), 'Grey outline = the ☆ Slight lean')}
@@ -491,7 +511,7 @@
       if (b?.kind === 'slight' && !why.length) why.push({ text: 'No strong signal either way: small stake or skip' });
       return `<article class="gcard ${b && b.kind !== 'slight' ? 'has-best' : ''}">
         <div class="c-top"><span class="tag">${g.emoji} ${esc(g.lg)}</span><span>${esc(fmtTime(g.start))}</span><span class="spacer"></span>${plus ? `<span class="edge">${plus} +EV</span>` : ''}</div>
-        ${b ? `<div class="gpick ${b.kind}" data-open="${esc(b.x.id)}">${b.kind === 'slight' ? '☆ Slight lean' : b.kind === 'ev' ? '⭐ Pick' : '⭐ Lean'}: <b>${esc(b.x.pick.replace(/ \(alt\)$/, ''))}</b> ${b.x.dec ? toAm(b.x.dec) : ''} · ${pct(b.x.fairP, 0)} to hit${b.kind === 'ev' ? ` · <span class="good">${signPct(b.x.ev)}</span>` : ''}${b.x.vibe?.score ? ` · vibe ${b.x.vibe.score > 0 ? '+' : ''}${b.x.vibe.score}` : ''}
+        ${b ? `<div class="gpick ${b.kind}" data-open="${esc(b.x.id)}">${b.kind === 'slight' ? '☆ Slight lean' : b.kind === 'ev' ? '⭐ Pick' : '⭐ Lean'}: <b>${esc(b.x.pick.replace(/ \(alt\)$/, ''))}</b> ${b.x.dec ? toAm(b.x.dec) : ''} · ${pct(b.x.fairP, 0)} to hit${b.kind === 'ev' ? ` · <span class="good">${signPct(b.x.ev)}</span>` : ''}${b.x.vibe?.score ? ` · vibe ${b.x.vibe.score > 0 ? '+' : ''}${b.x.vibe.score}` : ''} · ${unitsChip(b.kind === 'ev' ? unitsFor(b.x) : b.kind === 'lean' ? 0.5 : 0.25)}
           ${why.length ? `<div class="gwhy">${why.map(i => i.text).join(' · ')}</div>` : ''}</div>` : ''}
         <div class="ghead"><span></span><span>Spread</span><span>Total</span><span>ML</span></div>
         ${row(g, g.away, gd?.away.logo, 'o')}
@@ -570,7 +590,7 @@
       ${p.blurb ? `<div class="blurb">${esc(p.blurb)}</div>` : ''}
       ${legs.map(l => { const t = titleOf(l); return `<div class="pleg" data-open="${esc(l.id)}" style="cursor:pointer">${avatar(l)}<div class="t"><b>${esc(t.n)}</b><span class="muted">${esc(t.p)} · ${esc(l.book)}${l.vibe?.hit ? ` · <b style="display:inline;color:var(--edge)">hit ${l.vibe.hit.hits}/${l.vibe.hit.n}</b>` : ''} · ${pct(l.fairP, 0)}</span></div><b>${toAm(l.dec)}</b></div>`; }).join('')}
       <div class="pstats"><div><small>Hit</small><b>${pct(s.p, 1)}</b></div><div><small>EV</small><b style="color:var(--edge)">${signPct(s.ev)}</b></div>
-        <div><small>Stake</small><b>$${(s.f * S.bankroll).toFixed(2)}</b></div><div><small>$10 pays</small><b>$${(10 * s.dec).toFixed(0)}</b></div></div>
+        <div><small>Units</small><b>${unitsTxt(unitsParlay(legs), true)}</b><small style="text-transform:none;letter-spacing:0">$${(unitsParlay(legs) * unitSize()).toFixed(2)}</small></div><div><small>$10 pays</small><b>$${(10 * s.dec).toFixed(0)}</b></div></div>
       <button class="btn small" data-loadparlay="${esc(p.legs.join(','))}">Load into slip</button>
     </div>`;
   }
@@ -603,6 +623,7 @@
         <div class="card"><h3>📊 Hit-rate bars</h3><p>Each bar is one recent game: green = cleared the line, red = didn't, dashed line = tonight's number. Hit rate backs the price — it never replaces it (small samples lie).</p></div>
         <div class="card"><h3>🧠 Vibe score</h3><p>+1 for each thing backing the pick (ESPN model agrees, opposing starters out, teammate out → more usage, form, scoring projection), −1 for each against. 🟢 +2 or better, 🔴 −2 or worse.</p></div>
         <div class="card"><h3>🧮 Parlays</h3><p>Edges multiply: three +3% legs ≈ +9.3%. Three normal −110 legs ≈ −13%, which is why random parlays bleed money. Only +EV legs, one per game — same-game legs are correlated.</p></div>
+        <div class="card"><h3>💰 Units</h3><p>1 unit = 1% of your bankroll (or your own size in ⚙️). +EV bets are sized by ¼ Kelly (bigger edge + higher win chance = more units), rounded to ¼u and capped at 3u; matchup vibe nudges it. ⭐ Leans get 0.5u, ☆ slight leans 0.25u, parlays max 1u, no edge = 0u (skip).</p></div>
         <div class="card"><h3>💰 Kelly stake</h3><p>Stake = (b·p − q)/b of bankroll — the size that grows a bankroll fastest long-run. Default is ¼ Kelly because parlays swing hard. Tiny stakes are a feature, not a bug.</p></div>
         <div class="card"><h3>⏰ Auto-updates</h3><p>A GitHub Action rebuilds this card every morning and spends a slice of your monthly Odds API credits (credits left ÷ days left). Hit <b>↻ Live refresh</b> with your key for fresh lines any time.</p></div>
         <div class="card"><h3>🔌 Free data feeds</h3><p>Odds: The Odds API (your credits). Everything else is free, no keys: <b>ESPN</b> (stats, injuries, live scores, DraftKings lines), <b>NHL API</b> (likely starting goalies + save %), <b>nflverse</b> (NFL target share &amp; usage), <b>Open-Meteo</b> + ESPN (wind, rain, snow, cold at outdoor stadiums), <b>Kalshi</b> + <b>Polymarket</b> (real-money prediction markets as a second opinion), <b>MLB Stats API</b> (probable pitchers, in season).</p></div>
@@ -681,6 +702,7 @@
       <div class="m-body">
         <div><h4>Why this pick <span class="vibe ${vibeCls(x.vibe)}">${vibeTxt(x.vibe)}</span></h4><ul class="why">${v.items.map(i => `<li class="${i.tone}">${i.text}</li>`).join('')}</ul>${hitBlock}</div>
         <div>${probs}
+          ${x.dec ? `<div class="unitbox">💰 Recommended: <b>${unitsTxt(unitsFor(x))}</b><span class="muted"> · 1u = $${unitSize().toFixed(2)}</span></div>` : ''}
           <p class="note" style="margin-top:10px">${x.dec ? `<span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)} EV</span>` : ''} &nbsp;fair ${toAm(1 / x.fairP)} via ${esc(x.src)}${x.nBooks ? ` (${x.nBooks} books)` : ''}</p>
           ${B365() ? `<div class="b365" style="margin-top:12px"><span>🎯 Bet at bet365 if odds are <b>${targetAm(x)}</b> or better</span>${priceInput(x)}</div>` : ''}
           ${isSus(x) ? '<div class="warnbox">⚠ Edge this big usually means a stale or mistaken line. Check news before betting.</div>' : ''}
@@ -712,7 +734,7 @@
     const same = new Set(ls.map(l => l.eventId)).size < ls.length, reds = ls.filter(l => l.vibe?.score <= -2);
     openDrawer('🧾 Your slip', ls.length ? `
       ${ls.map(l => { const t = titleOf(l); return `<div class="slipleg">${avatar(l)}<div class="t"><b>${esc(t.n)}</b>${esc(t.p)} · ${esc(l.book)} <span class="edge" style="font-size:11px">${signPct(l.ev)}</span></div><b>${toAm(l.dec)}</b><button class="x" data-add="${esc(l.id)}" title="Remove">✕</button></div>`; }).join('')}
-      <div class="pstats"><div><small>Odds</small><b>${toAm(s.dec)}</b></div><div><small>Hit</small><b>${pct(s.p)}</b></div><div><small>EV</small><b style="color:${s.ev >= 0 ? 'var(--edge)' : 'var(--bad)'}">${signPct(s.ev)}</b></div><div><small>Stake</small><b>$${(s.f * S.bankroll).toFixed(2)}</b></div></div>
+      <div class="pstats"><div><small>Odds</small><b>${toAm(s.dec)}</b></div><div><small>Hit</small><b>${pct(s.p)}</b></div><div><small>EV</small><b style="color:${s.ev >= 0 ? 'var(--edge)' : 'var(--bad)'}">${signPct(s.ev)}</b></div><div><small>Units</small><b>${unitsTxt(ls.length > 1 ? unitsParlay(ls) : unitsFor(ls[0]), true)}</b><small style="text-transform:none;letter-spacing:0">$${((ls.length > 1 ? unitsParlay(ls) : unitsFor(ls[0]) || 0) * unitSize()).toFixed(2)}</small></div></div>
       <div class="meter"><span>True</span><div class="track"><i style="width:${Math.min(100, s.p * 100)}%;background:var(--edge)"></i></div><b>${pct(s.p, 0)}</b></div>
       <div class="meter"><span>Book</span><div class="track"><i style="width:${Math.min(100, s.implied * 100)}%;background:var(--muted)"></i></div><b>${pct(s.implied, 0)}</b></div>
       <p class="note">$10 pays <b>$${(10 * s.dec).toFixed(2)}</b> · expected profit per $10: <b>${s.ev >= 0 ? '+' : '−'}$${Math.abs(10 * s.ev).toFixed(2)}</b> · stake is ${S.kfrac === 0.25 ? '¼' : S.kfrac} Kelly on a $${S.bankroll} bankroll</p>
@@ -735,6 +757,7 @@
       <label>My sportsbook <select id="sMyBook"><option value="bet365">bet365 (I type in prices)</option><option value="best">Best price across US books</option></select></label>
       <label>Books I can bet <select id="sBooks"><option value="0">US books</option><option value="1" ${S.allBooks ? 'selected' : ''}>All books</option></select></label>
       <label>Bankroll ($) <input id="sBank" type="number" value="${esc(S.bankroll)}"></label>
+      <label>Unit size ($) <input id="sUnit" type="number" min="0" step="0.5" value="${S.unit > 0 ? esc(S.unit) : ''}" placeholder="auto: 1% of bankroll ($${Math.max(1, S.bankroll / 100).toFixed(2)})"></label>
       <label>Kelly fraction <select id="sKelly">${[[0.1, '1/10'], [0.25, '1/4'], [0.5, '1/2']].map(([v, l]) => `<option value="${v}" ${S.kfrac === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label>Theme <select id="sTheme"><option value="">Match system</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
       <button class="btn primary" id="saveSet">Save</button>
@@ -784,7 +807,7 @@
       case 'dropLive': store.set('liveCard', null); try { localStorage.removeItem('edge.liveCard'); } catch (err) {} card = window.EDGE_CARD; index(); render(); closeAll(); break;
       case 'saveSet':
         S.key = $('sKey').value.trim(); S.budget = Math.max(3, +$('sBudget').value || 8); S.allBooks = $('sBooks').value === '1';
-        S.bankroll = +$('sBank').value || 500; S.kfrac = +$('sKelly').value; S.myBook = $('sMyBook').value;
+        S.bankroll = +$('sBank').value || 500; S.kfrac = +$('sKelly').value; S.myBook = $('sMyBook').value; S.unit = Math.max(0, +$('sUnit').value || 0); store.set('unit', S.unit);
         ['key', 'allBooks', 'bankroll', 'kfrac', 'myBook'].forEach(k => store.set(k, S[k])); store.set('budget2', S.budget);
         store.set('theme', $('sTheme').value); applyTheme();
         if (card) { E.applyBooks([...card.lines, ...card.props], S.allBooks); Object.values(byId).forEach(x => delete x._orig); applyPrices(); }
