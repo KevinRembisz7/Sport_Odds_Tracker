@@ -28,11 +28,13 @@
     espn_uecl: { lg: 'UECL', emoji: '⚽', espn: 'soccer/uefa.europa.conf', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
     espn_facup: { lg: 'FA Cup', emoji: '🏴', espn: 'soccer/eng.fa', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
     espn_eflcup: { lg: 'EFL Cup', emoji: '🏴', espn: 'soccer/eng.league_cup', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
-    espn_laliga: { lg: 'LaLiga', emoji: '⚽', espn: 'soccer/esp.1', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
-    espn_seriea: { lg: 'SerieA', emoji: '⚽', espn: 'soccer/ita.1', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
-    espn_bundesliga: { lg: 'Bundesliga', emoji: '⚽', espn: 'soccer/ger.1', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
-    espn_ligue1: { lg: 'Ligue1', emoji: '⚽', espn: 'soccer/fra.1', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
-    espn_mls: { lg: 'MLS', emoji: '⚽', espn: 'soccer/usa.1', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
+    // Big European leagues + MLS: props (goalscorer / shots on target at 4-5 US books) in the round-robin at the lowest
+    // priority; lines are bought only with leftover budget, otherwise they come free from ESPN
+    soccer_spain_la_liga: { lg: 'LaLiga', emoji: '⚽', espn: 'soccer/esp.1', kind: 'other', lines: 'h2h,spreads,totals', pri: 4, oneSided: true, props: ['player_goal_scorer_anytime', 'player_shots_on_target', 'player_shots', 'player_assists'] },
+    soccer_italy_serie_a: { lg: 'SerieA', emoji: '⚽', espn: 'soccer/ita.1', kind: 'other', lines: 'h2h,spreads,totals', pri: 4, oneSided: true, props: ['player_goal_scorer_anytime', 'player_shots_on_target', 'player_shots', 'player_assists'] },
+    soccer_germany_bundesliga: { lg: 'Bundesliga', emoji: '⚽', espn: 'soccer/ger.1', kind: 'other', lines: 'h2h,spreads,totals', pri: 4, oneSided: true, props: ['player_goal_scorer_anytime', 'player_shots_on_target', 'player_shots', 'player_assists'] },
+    soccer_france_ligue_one: { lg: 'Ligue1', emoji: '⚽', espn: 'soccer/fra.1', kind: 'other', lines: 'h2h,spreads,totals', pri: 4, oneSided: true, props: ['player_goal_scorer_anytime', 'player_shots_on_target', 'player_shots', 'player_assists'] },
+    soccer_usa_mls: { lg: 'MLS', emoji: '⚽', espn: 'soccer/usa.1', kind: 'other', lines: 'h2h,spreads,totals', pri: 4, oneSided: true, props: ['player_goal_scorer_anytime', 'player_shots_on_target', 'player_shots', 'player_assists'] },
   };
   // Pinnacle + 9 US books = one "region" worth of credits on The Odds API.
   const BOOKS = 'pinnacle,draftkings,fanduel,betmgm,williamhill_us,espnbet,betrivers,fanatics,betonlineag,bovada';

@@ -3,7 +3,7 @@
 Daily +EV sports picks, **player props** and parlays. Every price is checked against the sharp no-vig line and backed by injuries, hit rates and matchup stats. A GitHub Action rebuilds the card every morning and publishes it to GitHub Pages.
 
 ## What's on the card
-- **Game lines** (ML, spreads, totals): NFL, NBA, NHL, NCAAF, NCAAB, MLB, EPL, Champions League, Europa League, MMA, plus any live ATP/WTA tournament. Free lines via ESPN also cover La Liga, Serie A, Bundesliga, Ligue 1, MLS, the Conference League, the FA Cup and the EFL Cup. The fair price is Pinnacle's line with the vig removed (power de-vig).
+- **Game lines** (ML, spreads, totals): NFL, NBA, NHL, NCAAF, NCAAB, MLB, EPL, Champions League, Europa League, MMA, plus any live ATP/WTA tournament. La Liga, Serie A, Bundesliga, Ligue 1 and MLS also get player props (anytime goalscorer, shots on target, shots, assists) when the budget allows. Free lines via ESPN also cover the Conference League, the FA Cup and the EFL Cup. The fair price is Pinnacle's line with the vig removed (power de-vig).
 - **Player props**: points, rebounds, assists, threes and PRA in basketball; passing, rushing and receiving yards plus receptions in football; shots, points and assists in hockey. The fair price is Pinnacle's no-vig line when Pinnacle offers the prop, otherwise the median no-vig line across 3+ books.
 - **Hit rates**: each player's recent ESPN game log compared to tonight's line.
 - **Vibe score**: ESPN's win model vs the market, injuries (whose absence opens up whose matchup), teammates out (who picks up the extra usage), form and a scoring projection.
