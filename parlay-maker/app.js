@@ -71,7 +71,7 @@
     if (t?.logo) return `<div class="avatar logo ${cls}"><img src="${esc(t.logo)}" alt="" loading="lazy" onerror="this.remove()"></div>`;
     return `<div class="avatar ${cls}">${x.emoji || '🎲'}</div>`;
   }
-  const propLabel = x => x.kalshi ? `${Math.floor(x.point) + 1}+ ${x.statLabel} · Kalshi` : x.alt && x.side === 'Over' ? `${Math.floor(x.point) + 1}+ ${x.statLabel} · ladder` : `${x.side} ${x.point} ${x.statLabel}${x.alt ? ' · alt' : ''}`;
+  const propLabel = x => x.kalshi ? (x.market === 'player_anytime_td' && x.point < 1 ? 'Anytime TD · Kalshi' : x.market === 'player_goal_scorer_anytime' ? 'Anytime goal · Kalshi' : `${Math.floor(x.point) + 1}+ ${x.statLabel} · Kalshi`) : x.alt && x.side === 'Over' ? `${Math.floor(x.point) + 1}+ ${x.statLabel} · ladder` : `${x.side} ${x.point} ${x.statLabel}${x.alt ? ' · alt' : ''}`;
   function titleOf(x) {
     if (x.type === 'prop') return { n: x.player, p: propLabel(x), g: `${x.team || ''}${x.opp ? ' vs ' + x.opp : ''} · ${x.game}` };
     if (x.market === 'totals') return { n: x.game, p: x.pick, g: 'Game total' };
@@ -467,6 +467,7 @@
       if (x.market === 'h2h') g.ml[x.team] = x;
       else if (x.market === 'spreads') g.sp[x.team] = x;
       else if (x.market === 'totals') g.tot[/^over/i.test(x.pick) ? 'o' : 'u'] = x;
+      else if (x.market === 'team_totals' && x.side === 'Over') (g.tt ||= []).push(x);
     }
     let list = Object.values(games);
     for (const g of list) g.best = bestSide([...Object.values(g.ml), ...Object.values(g.sp), ...Object.values(g.tot)]);
@@ -496,6 +497,11 @@
         ${row(g, g.away, gd?.away.logo, 'o')}
         ${row(g, g.home, gd?.home.logo, 'u')}
         ${g.ml.Draw ? `<div class="grow"><div class="gteam"><span>Draw</span></div><div></div><div></div>${gameCell(g.ml.Draw, 'Draw')}</div>` : ''}
+        ${g.tt?.length ? (() => { // team totals (Kalshi): show the rung closest to a coin flip for each team
+          const pickTT = team => g.tt.filter(x => x.team === team).sort((a, b) => Math.abs(a.fairP - 0.5) - Math.abs(b.fairP - 0.5))[0];
+          const cells = [g.away, g.home].map(pickTT).filter(Boolean);
+          return cells.length ? `<div class="gtt">🎯 Team totals · ${cells.map(x => `<span data-open="${esc(x.id)}">${esc(x.team.split(' ').slice(-1)[0])} o${x.point} <b>${pct(x.fairP, 0)}</b>${B365() ? ` · 365 ≥ ${targetAm(x)}` : ''}</span>`).join(' · ')} <span class="muted">(Kalshi)</span></div>` : '';
+        })() : ''}
       </article>`;
     };
     const est = items.some(x => x.espnLine);
@@ -504,7 +510,7 @@
   }
   function viewBoard() {
     const all = filtered([...card.lines, ...card.props]).filter(x => !isSus(x));
-    const gameLines = filtered((card.board || []).filter(x => x.type === 'line' && !x.alt).map(x => byId[x.id] || x));
+    const gameLines = filtered((card.board || []).filter(x => x.type === 'line' && (!x.alt || x.market === 'team_totals')).map(x => byId[x.id] || x));
     const counts = Object.fromEntries(SECTIONS.map(([k, , fn]) => [k, k === 'games' ? new Set(gameLines.map(x => x.eventId)).size : k === 'players' ? new Set((S.allPlayers ? filtered(allPlayerProps()) : all.filter(fn)).map(x => x.player)).size : all.filter(fn).length]));
     const [key, , fn] = SECTIONS.find(s2 => s2[0] === S.section) || SECTIONS[3];
     const items = sortItems(all.filter(fn));
@@ -531,7 +537,7 @@
   }
   function viewLines() {
     const pos = sortItems(filtered(card.lines));
-    const all = filtered((card.board || []).filter(x => x.type === 'line' && !x.alt).map(x => byId[x.id] || x));
+    const all = filtered((card.board || []).filter(x => x.type === 'line' && (!x.alt || x.market === 'team_totals')).map(x => byId[x.id] || x));
     const nGames = new Set(all.map(x => x.eventId)).size;
     return `<div class="sec"><h2>📊 Game lines</h2><span>${nGames} games · spread, total and moneyline for every game</span></div>
       ${pos.length ? `<div class="sec sub"><h2>🟢 +EV right now</h2><span>priced vs Pinnacle no-vig</span></div><div class="grid">${pos.slice(0, 9).map(x => pickCard_(x)).join('')}</div>

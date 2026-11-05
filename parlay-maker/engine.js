@@ -58,6 +58,21 @@
     pitcher_strikeouts: { label: 'Ks', keys: ['strikeouts', 'K'] },
     player_goal_scorer_anytime: { label: 'Goals', keys: ['totalGoals', 'goals', 'G'] },
     player_goals: { label: 'Goals', keys: ['goals', 'G', 'totalGoals'] },
+    player_steals: { label: 'STL', keys: ['STL', 'steals'] },
+    player_blocks: { label: 'BLK', keys: ['BLK', 'blocks'] },
+    player_points_assists: { label: 'P+A', sum: ['player_points', 'player_assists'] },
+    player_rebounds_assists: { label: 'R+A', sum: ['player_rebounds', 'player_assists'] },
+    player_stocks: { label: 'STL+BLK', sum: ['player_steals', 'player_blocks'] },
+    player_rush_tds: { label: 'Rush TD', keys: ['rushingTouchdowns'] },
+    player_rec_tds: { label: 'Rec TD', keys: ['receivingTouchdowns'] },
+    player_anytime_td: { label: 'TDs', sum: ['player_rush_tds', 'player_rec_tds'] },
+    player_rush_reception_yds: { label: 'Rush+Rec Yds', sum: ['player_rush_yds', 'player_reception_yds'] },
+    player_saves: { label: 'Saves', keys: ['saves', 'SV'] },
+    player_soccer_assists: { label: 'AST', keys: ['goalAssists', 'assists'] },
+    player_score_or_assist: { label: 'G+A', sum: ['player_goal_scorer_anytime', 'player_soccer_assists'] },
+    batter_runs: { label: 'Runs', keys: ['runs', 'R'] },
+    batter_rbis: { label: 'RBI', keys: ['RBIs', 'RBI', 'rbi'] },
+    batter_hits_runs_rbis: { label: 'H+R+RBI', sum: ['batter_hits', 'batter_runs', 'batter_rbis'] },
     player_shots_on_target: { label: 'SOT', keys: ['shotsOnTarget', 'SOT', 'ST'] },
     player_shots: { label: 'Shots', keys: ['totalShots', 'shots', 'SH'] },
   };
@@ -768,7 +783,7 @@
     // drop anything that has already started (matters when re-running on a saved card)
     const nowD = new Date(), future = x => !x.start || new Date(x.start) > nowD;
     card.lines = card.lines.filter(future); card.props = card.props.filter(future);
-    card.board = (card.board || []).filter(x => future(x) && !x.espnLine);
+    card.board = (card.board || []).filter(x => future(x) && !x.espnLine && !x.kalshi); // rebuilt below
     const { lines, props, fairML } = card;
     card.games = {};
     const cache = {};
@@ -778,7 +793,7 @@
     card.board = card.board.filter(x => !x.kalshi);
     const kp = await kalshiProps(card, get, getJSON, nowD).catch(() => []);
     const have = new Set(card.board.filter(x => x.type === 'prop').map(x => `${x.market}|${normName(x.player)}|${x.point}`));
-    card.board.push(...kp.filter(k => !have.has(`${k.market}|${normName(k.player)}|${k.point}`)));
+    card.board.push(...kp.filter(k => k.type === 'line' || !have.has(`${k.market}|${normName(k.player)}|${k.point}`)));
     log(`Kalshi player props: ${kp.length} liquid rungs across ${new Set(kp.map(k => k.eventId)).size} games`);
     log(`free ESPN/DraftKings lines added for ${new Set(espnLines.map(x => x.eventId)).size} more games`);
     const espn = makeEspn(getJSON);
@@ -1145,22 +1160,26 @@
   // Odds API budget didn't reach, and give a second opinion on the app's own prop picks. Requests are throttled
   // (Kalshi rate-limits bursts) and retried once.
   const KALSHI_PROPS = {
-    basketball_nba: [['KXNBAPTS', 'player_points'], ['KXNBAREB', 'player_rebounds'], ['KXNBAAST', 'player_assists'], ['KXNBA3PT', 'player_threes']],
-    icehockey_nhl: [['KXNHLPTS', 'player_points'], ['KXNHLAST', 'player_assists'], ['KXNHLGOAL', 'player_goals']],
-    americanfootball_nfl: [['KXNFLRECYDS', 'player_reception_yds'], ['KXNFLREC', 'player_receptions'], ['KXNFLPASSYDS', 'player_pass_yds'], ['KXNFLRSHYDS', 'player_rush_yds']],
-    soccer_epl: [['KXEPLGOAL', 'player_goal_scorer_anytime'], ['KXEPLAST', 'player_assists']],
-    soccer_uefa_champs_league: [['KXUCLGOAL', 'player_goal_scorer_anytime'], ['KXUCLSOT', 'player_shots_on_target'], ['KXUCLSHOT', 'player_shots'], ['KXUCLAST', 'player_assists']],
+    basketball_nba: [['KXNBAPTS', 'player_points'], ['KXNBAREB', 'player_rebounds'], ['KXNBAAST', 'player_assists'], ['KXNBA3PT', 'player_threes'],
+      ['KXNBAPA', 'player_points_assists'], ['KXNBARA', 'player_rebounds_assists'], ['KXNBASTOCKS', 'player_stocks']],
+    icehockey_nhl: [['KXNHLPTS', 'player_points'], ['KXNHLAST', 'player_assists'], ['KXNHLGOAL', 'player_goals'], ['KXNHLSAVE', 'player_saves'], ['KXNHLTEAMTOTAL', 'team_totals']],
+    americanfootball_nfl: [['KXNFLRECYDS', 'player_reception_yds'], ['KXNFLREC', 'player_receptions'], ['KXNFLPASSYDS', 'player_pass_yds'], ['KXNFLRSHYDS', 'player_rush_yds'],
+      ['KXNFLRRYDS', 'player_rush_reception_yds'], ['KXNFLANYTD', 'player_anytime_td'], ['KXNFL2TD', 'player_anytime_td'], ['KXNFLTEAMTOTAL', 'team_totals']],
+    americanfootball_ncaaf: [['KXNCAAFTEAMTOTAL', 'team_totals']],
+    soccer_epl: [['KXEPLGOAL', 'player_goal_scorer_anytime'], ['KXEPLAST', 'player_soccer_assists'], ['KXEPLSOA', 'player_score_or_assist']],
+    soccer_uefa_champs_league: [['KXUCLGOAL', 'player_goal_scorer_anytime'], ['KXUCLSOT', 'player_shots_on_target'], ['KXUCLSHOT', 'player_shots'],
+      ['KXUCLAST', 'player_soccer_assists'], ['KXUCLSOA', 'player_score_or_assist'], ['KXUCLSAVE', 'player_saves']],
     soccer_spain_la_liga: [['KXLALIGAGOAL', 'player_goal_scorer_anytime']], soccer_italy_serie_a: [['KXSERIEAGOAL', 'player_goal_scorer_anytime']],
     soccer_germany_bundesliga: [['KXBUNDESLIGAGOAL', 'player_goal_scorer_anytime']], soccer_france_ligue_one: [['KXLIGUE1GOAL', 'player_goal_scorer_anytime']],
     soccer_usa_mls: [['KXMLSGOAL', 'player_goal_scorer_anytime']],
-    baseball_mlb: [['KXMLBHIT', 'batter_hits'], ['KXMLBKS', 'pitcher_strikeouts']],
+    baseball_mlb: [['KXMLBHIT', 'batter_hits'], ['KXMLBKS', 'pitcher_strikeouts'], ['KXMLBHRR', 'batter_hits_runs_rbis']],
   };
   const KALSHI_ALIAS = { WSH: ['WAS'], WAS: ['WSH'], UTAH: ['UTA'], UTA: ['UTAH'] };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   async function kalshiFetch(get, url) {
     for (let tries = 0; tries < 2; tries++) {
       try { const r = await get(url); if (r?.json?.markets) return r.json; } catch (e) {}
-      await sleep(1500);
+      await sleep(2500);
     }
     return null;
   }
@@ -1191,24 +1210,35 @@
         let cursor = '', pages = 0;
         do {
           const d = await kalshiFetch(get, `https://api.elections.kalshi.com/trade-api/v2/markets?limit=1000&status=open&series_ticker=${ser}${cursor ? '&cursor=' + cursor : ''}`);
-          await sleep(250);
+          await sleep(900); // Kalshi throttles bursts (~1 request/second is safe)
           if (!d) break;
           for (const m of d.markets || []) {
-            if (m.strike_type !== 'greater' || m.floor_strike == null || !m.title?.includes(':')) continue;
+            const isTeam = market === 'team_totals';
+            if (m.strike_type !== 'greater' || m.floor_strike == null || (!isTeam && !m.title?.includes(':'))) continue;
             const bid = +m.yes_bid_dollars, ask = +m.yes_ask_dollars;
             if (!(bid > 0 && ask > 0 && ask - bid <= 0.06)) continue;
             const mid = (bid + ask) / 2;
-            if (mid < 0.08 || mid > 0.92) continue; // long shots / near-locks add size, not value
+            if (mid < 0.12 || mid > 0.88) continue; // long shots / near-locks add size, not value
             const when = new Date(m.occurrence_datetime || m.expected_expiration_time);
             const code = (m.event_ticker.split('-')[1] || '').replace(/^\d{2}[A-Z]{3}\d{2}/, '');
             const g = await gameFor(sport, code, when);
             if (!g) continue;
             const t = new Date(g.start) - now;
             if (t <= 0 || t > windowH * 36e5) continue;
+            if (isTeam) {
+              const who = (m.title.match(/^(.*?) over /i) || [])[1] || m.yes_sub_title || '';
+              const team = labelMatch(g.home, who) || labelMatch(who, g.home.split(' ')[0]) ? g.home : labelMatch(g.away, who) || labelMatch(who, g.away.split(' ')[0]) ? g.away : null;
+              if (!team) continue;
+              const point = +m.floor_strike, base = { type: 'line', kalshi: true, market: 'team_totals', eventId: g.eventId, sport, lg: S.lg, emoji: S.emoji,
+                game: `${g.away} @ ${g.home}`, home: g.home, away: g.away, start: g.start, team, point, src: `Kalshi traders (${Math.round((ask - bid) * 100)}¢ spread)` };
+              out.push({ ...base, id: `kalshi|${m.ticker}|o`, side: 'Over', pick: `${team} team total over ${point}`, fairP: mid });
+              out.push({ ...base, id: `kalshi|${m.ticker}|u`, side: 'Under', pick: `${team} team total under ${point}`, fairP: 1 - mid });
+              continue;
+            }
             const player = m.title.split(':')[0].trim(), point = +m.floor_strike, label = PROP_STATS[market]?.label || market;
             out.push({ type: 'prop', kalshi: true, alt: true, id: `kalshi|${m.ticker}`, eventId: g.eventId, sport, lg: S.lg, emoji: S.emoji,
               game: `${g.away} @ ${g.home}`, home: g.home, away: g.away, start: g.start, player, market, point, side: 'Over', statLabel: label,
-              pick: market === 'player_goal_scorer_anytime' ? `${player} anytime goal` : `${player} ${Math.floor(point) + 1}+ ${label}`,
+              pick: market === 'player_goal_scorer_anytime' ? `${player} anytime goal` : market === 'player_anytime_td' ? (point < 1 ? `${player} anytime TD` : `${player} ${Math.floor(point) + 1}+ TDs`) : `${player} ${Math.floor(point) + 1}+ ${label}`,
               fairP: mid, src: `Kalshi traders (${Math.round((ask - bid) * 100)}¢ spread)` });
           }
           cursor = d.cursor || '';
@@ -1277,6 +1307,10 @@
     const hs = +ev.h.score, as = +ev.a.score;
     const cmp = (v, line) => v > line ? 'won' : v < line ? 'lost' : 'push';
     if (leg.type === 'line') {
+      if (leg.market === 'team_totals') {
+        const v = norm(leg.team) === norm(leg.home) ? hs : as, r = cmp(v, leg.point);
+        return { result: leg.side === 'Under' ? (r === 'won' ? 'lost' : r === 'lost' ? 'won' : r) : r, actual: `${v} pts` };
+      }
       if (leg.market === 'totals') { const r = cmp(hs + as, leg.point); return { result: /^over/i.test(leg.pick) ? r : r === 'won' ? 'lost' : r === 'lost' ? 'won' : r, actual: `${hs + as} total` }; }
       const final = `${ev.a.team.abbreviation} ${as} – ${ev.h.team.abbreviation} ${hs}`;
       if (leg.team === 'Draw') return { result: hs === as ? 'won' : 'lost', actual: final };
@@ -1313,7 +1347,8 @@
     const out = { state, detail: st.type?.shortDetail || '', frac, score: `${ev.a.team.abbreviation} ${as} – ${ev.h.team.abbreviation} ${hs}` };
     if (state === 'pre') return out;
     if (leg.type === 'line') {
-      if (leg.market === 'totals') Object.assign(out, { kind: 'count', value: hs + as, line: leg.point, over: /^over/i.test(leg.pick) });
+      if (leg.market === 'team_totals') Object.assign(out, { kind: 'count', value: norm(leg.team) === norm(leg.home) ? hs : as, line: leg.point, over: leg.side !== 'Under' });
+      else if (leg.market === 'totals') Object.assign(out, { kind: 'count', value: hs + as, line: leg.point, over: /^over/i.test(leg.pick) });
       else {
         const isHome = norm(leg.team) === norm(leg.home), mine = isHome ? hs : as, theirs = isHome ? as : hs;
         Object.assign(out, { kind: 'margin', margin: mine - theirs, cover: mine - theirs + (leg.market === 'spreads' ? leg.point : 0), draw: leg.team === 'Draw' });
