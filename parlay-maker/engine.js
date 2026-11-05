@@ -17,8 +17,10 @@
       props: ['player_points', 'player_rebounds', 'player_assists'] },
     baseball_mlb: { lg: 'MLB', emoji: '⚾', espn: 'baseball/mlb', kind: 'other', lines: 'h2h,spreads,totals', pri: 2,
       props: ['batter_hits', 'batter_total_bases', 'pitcher_strikeouts'] },
-    soccer_epl: { lg: 'EPL', emoji: '⚽', espn: 'soccer/eng.1', kind: 'other', lines: 'h2h,totals', pri: 3 },
-    soccer_uefa_champs_league: { lg: 'UCL', emoji: '⚽', espn: 'soccer/uefa.champions', kind: 'other', lines: 'h2h,totals', pri: 3 },
+    soccer_epl: { lg: 'EPL', emoji: '⚽', espn: 'soccer/eng.1', kind: 'other', lines: 'h2h,spreads,totals', pri: 3, oneSided: true,
+      props: ['player_goal_scorer_anytime', 'player_shots_on_target', 'player_shots', 'player_assists'] },
+    soccer_uefa_champs_league: { lg: 'UCL', emoji: '⚽', espn: 'soccer/uefa.champions', kind: 'other', lines: 'h2h,spreads,totals', pri: 3, oneSided: true,
+      props: ['player_goal_scorer_anytime', 'player_shots_on_target', 'player_shots', 'player_assists'] },
     mma_mixed_martial_arts: { lg: 'MMA', emoji: '🥊', kind: 'other', lines: 'h2h', pri: 4 },
   };
   // Pinnacle + 9 US books = one "region" worth of credits on The Odds API.
@@ -41,6 +43,9 @@
     batter_hits: { label: 'Hits', keys: ['hits', 'H'] },
     batter_total_bases: { label: 'Total Bases', keys: ['totalBases', 'TB'] },
     pitcher_strikeouts: { label: 'Ks', keys: ['strikeouts', 'K'] },
+    player_goal_scorer_anytime: { label: 'Goals', keys: ['totalGoals', 'goals', 'G'] },
+    player_shots_on_target: { label: 'SOT', keys: ['shotsOnTarget', 'SOT', 'ST'] },
+    player_shots: { label: 'Shots', keys: ['totalShots', 'shots', 'SH'] },
   };
 
   // ---------------- math ----------------
@@ -127,6 +132,40 @@
           player, market, point: +point, side: Side, statLabel: label, pick: `${player} ${Side} ${point} ${label}`,
           prices, fairP, src, nBooks: pairs.length });
       }
+    }
+    return out;
+  }
+
+  // ---------------- one-sided props (soccer goalscorer / shots): line-shop vs the market ----------------
+  // Books post only "Yes"/"Over" here and Pinnacle doesn't post them, so there's no pair to de-vig. Fair = median implied
+  // across 4+ books, shaded power-style (p^1.1): books pad longshots harder than favorites, so a flat cut overrates them.
+  // Longshots under 12% are skipped (too noisy across books). Needs a 5% edge — really "one book is way off the market".
+  const ONE_WAY_HOLD = { player_goal_scorer_anytime: 1.1, player_shots_on_target: 1.1, player_shots: 1.1, player_assists: 1.1 };
+  const ONE_WAY_MIN_BOOKS = { player_goal_scorer_anytime: 4 }; // others: 3
+  function oneSidedFromEvent(ev, sport) {
+    const S = SPORTS[sport] || {}, out = [], groups = {};
+    for (const b of ev.bookmakers || []) for (const m of b.markets || []) {
+      if (!ONE_WAY_HOLD[m.key]) continue;
+      for (const o of m.outcomes || []) {
+        if (!o.description) continue;
+        if (o.name !== 'Yes' && o.name !== 'Over') continue;
+        const point = o.point ?? 0.5, g = groups[`${m.key}|${o.description}|${point}`] ||= {}, d = toDec(o.price);
+        if (!g[b.key] || d > g[b.key].dec) g[b.key] = { title: b.title, dec: d };
+      }
+    }
+    for (const [k, books] of Object.entries(groups)) {
+      const [market, player, pt] = k.split('|'), point = +pt, list = Object.entries(books);
+      if (list.length < (ONE_WAY_MIN_BOOKS[market] || 3)) continue;
+      if (sport.startsWith('soccer') === false && market === 'player_assists') continue; // NBA/NHL assists are two-sided props
+      const fairP = Math.min(0.97, Math.pow(median(list.map(([, v]) => 1 / v.dec)), ONE_WAY_HOLD[market]));
+      if (fairP < 0.12) continue;
+      const label = PROP_STATS[market]?.label || market;
+      out.push({ type: 'prop', oneSided: true, id: `${ev.id}|1s|${k}`, eventId: ev.id, sport, lg: S.lg || sport, emoji: S.emoji || '🎲',
+        game: `${ev.away_team} @ ${ev.home_team}`, home: ev.home_team, away: ev.away_team, start: ev.commence_time,
+        player, market, point, side: 'Over', statLabel: label,
+        pick: market === 'player_goal_scorer_anytime' ? `${player} anytime goal` : `${player} ${Math.floor(point) + 1}+ ${label}`,
+        prices: list.filter(([bk]) => bk !== 'pinnacle').map(([bk, v]) => ({ key: bk, title: v.title, dec: v.dec })),
+        fairP, src: `Market median of ${list.length} books (est.)`, nBooks: list.length, minEdge: 0.05 });
     }
     return out;
   }
@@ -599,7 +638,7 @@
         if (mk.length < 2) continue;
         try {
           const r = await odds(`/sports/${s}/events/${e.id}/odds?bookmakers=${BOOKS}&markets=${mk.join(',')}&oddsFormat=american`); track(r.headers);
-          const got = propsFromEvent(r.json, s);
+          const got = [...propsFromEvent(r.json, s), ...(SPORTS[s].oneSided ? oneSidedFromEvent(r.json, s) : [])];
           props.push(...got); if (got.length) propGames.push(e);
           fetched = true;
         } catch (err) { log(`props ${e.id} failed: ${err.message}`); }
@@ -649,7 +688,7 @@
     applyBooks(lines, allowAll); applyBooks(props, allowAll);
     // Full fair-odds board (every line + prop, +EV or not) for people pricing a book we can't pull, e.g. bet365.
     const keep = ['id', 'type', 'eventId', 'sport', 'lg', 'emoji', 'game', 'home', 'away', 'team', 'market', 'point', 'pick',
-      'player', 'side', 'statLabel', 'fairP', 'src', 'start'];
+      'player', 'side', 'statLabel', 'fairP', 'src', 'start', 'alt', 'oneSided', 'dec', 'book', 'ev'];
     card.board = [...lines, ...props].map(x => Object.fromEntries(keep.filter(k => x[k] != null).map(k => [k, x[k]])));
     lines = lines.filter(l => l.dec && l.ev >= 0.005).sort((a, b) => b.ev - a.ev).slice(0, maxLines);
     props = props.filter(p => p.dec && p.ev >= (p.minEdge ?? 0.01)).sort((a, b) => b.ev - a.ev).slice(0, maxProps);
@@ -856,7 +895,7 @@
   }
 
   const Engine = { SPORTS, PROP_STATS, STALE, PROP_STALE, toDec, toAm, pct, esc, devig, norm, normName,
-    legsFromEvents, propsFromEvent, altsFromEvent, altPropsFromEvent, ladderModel, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
+    legsFromEvents, propsFromEvent, oneSidedFromEvent, altsFromEvent, altPropsFromEvent, ladderModel, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
     parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
     pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult, liveStatus };
   root.Engine = Engine;

@@ -339,6 +339,7 @@
   }
   // ---------- bet board: one place for every kind of bet ----------
   const SECTIONS = [
+    ['games', '🏟️ All games', x => x.type === 'line' && !x.alt],
     ['totals', '📈 Over/Unders', x => x.type === 'line' && x.market === 'totals' && !x.alt],
     ['sides', '📏 Spreads & ML', x => x.type === 'line' && x.market !== 'totals' && !x.alt],
     ['alts', '🔀 Alt lines', x => x.alt && x.type === 'line'],
@@ -381,13 +382,58 @@
       + (list.length > shown.length ? `<div style="text-align:center;margin-top:12px"><button class="btn" id="moreBtn">Show more players (${list.length - shown.length} left)</button></div>` : '')
       : empty('No players match these filters.');
   }
+  // sportsbook-style board: every game with spread / total / moneyline for both sides
+  function gameCell(x, label) {
+    if (!x) return '<div class="gcell empty">—</div>';
+    const pos = x.dec && x.ev >= 0.01 && !isSus(x);
+    return `<div class="gcell ${pos ? 'pos' : ''}" data-open="${esc(x.id)}">
+      <b>${esc(label)}</b>
+      <span class="gp">${x.dec ? toAm(x.dec) : toAm(1 / x.fairP)}</span>
+      <small>${B365() ? `<span class="wide">${x.dec ? `fair ${toAm(1 / x.fairP)} · ` : ''}</span>365 ≥ ${targetAm(x)}` : x.dec ? `fair ${toAm(1 / x.fairP)}` : 'fair'}</small>
+      ${pos ? `<span class="edge">${signPct(x.ev)}</span>` : ''}
+    </div>`;
+  }
+  function gamesBoard(items) {
+    const games = {};
+    for (const x of items) {
+      const g = games[x.eventId] ||= { id: x.eventId, game: x.game, home: x.home, away: x.away, start: x.start, lg: x.lg, emoji: x.emoji, sport: x.sport, ml: {}, sp: {}, tot: {} };
+      if (x.market === 'h2h') g.ml[x.team] = x;
+      else if (x.market === 'spreads') g.sp[x.team] = x;
+      else if (x.market === 'totals') g.tot[/^over/i.test(x.pick) ? 'o' : 'u'] = x;
+    }
+    let list = Object.values(games);
+    list.sort((a, b) => S.sort === 'sport' ? lgRank(a) - lgRank(b) || a.start.localeCompare(b.start) : a.start.localeCompare(b.start));
+    if (!list.length) return empty('No game lines match these filters.');
+    const ptxt = p => (p > 0 ? '+' : '') + p;
+    const row = (g, team, logo, totKey) => `<div class="grow">
+      <div class="gteam">${logo ? `<img src="${esc(logo)}" alt="" loading="lazy" onerror="this.remove()">` : ''}<span class="wide">${esc(team)}</span><span class="narrow">${esc(team === 'Draw' ? team : team.split(' ').slice(-1)[0])}</span></div>
+      ${gameCell(g.sp[team], g.sp[team] ? ptxt(g.sp[team].point) : '')}
+      ${gameCell(g.tot[totKey], g.tot[totKey] ? `${totKey === 'o' ? 'O' : 'U'} ${g.tot[totKey].point}` : '')}
+      ${gameCell(g.ml[team], 'ML')}
+    </div>`;
+    const card1 = g => {
+      const gd = card.games?.[g.id], plus = [...Object.values(g.ml), ...Object.values(g.sp), ...Object.values(g.tot)].filter(x => x.dec && x.ev >= 0.01 && !isSus(x)).length;
+      return `<article class="gcard">
+        <div class="c-top"><span class="tag">${g.emoji} ${esc(g.lg)}</span><span>${esc(fmtTime(g.start))}</span><span class="spacer"></span>${plus ? `<span class="edge">${plus} +EV</span>` : ''}</div>
+        <div class="ghead"><span></span><span>Spread</span><span>Total</span><span>ML</span></div>
+        ${row(g, g.away, gd?.away.logo, 'o')}
+        ${row(g, g.home, gd?.home.logo, 'u')}
+        ${g.ml.Draw ? `<div class="grow"><div class="gteam"><span>Draw</span></div><div></div><div></div>${gameCell(g.ml.Draw, 'Draw')}</div>` : ''}
+      </article>`;
+    };
+    return `<p class="note" style="margin-top:-4px">Every game on the board. Each box: the line, best price, fair price${B365() ? ', your bet365 target' : ''}. Green = +EV. Tap a box for details or to add it to your slip.</p>`
+      + sportSections(list, gs => `<div class="ggrid">${gs.map(card1).join('')}</div>`);
+  }
   function viewBoard() {
     const all = filtered([...card.lines, ...card.props]).filter(x => !isSus(x));
-    const counts = Object.fromEntries(SECTIONS.map(([k, , fn]) => [k, k === 'players' ? new Set((S.allPlayers ? filtered(allPlayerProps()) : all.filter(fn)).map(x => x.player)).size : all.filter(fn).length]));
+    const gameLines = filtered((card.board || []).filter(x => x.type === 'line' && !x.alt).map(x => byId[x.id] || x));
+    const counts = Object.fromEntries(SECTIONS.map(([k, , fn]) => [k, k === 'games' ? new Set(gameLines.map(x => x.eventId)).size : k === 'players' ? new Set((S.allPlayers ? filtered(allPlayerProps()) : all.filter(fn)).map(x => x.player)).size : all.filter(fn).length]));
     const [key, , fn] = SECTIONS.find(s2 => s2[0] === S.section) || SECTIONS[3];
     const items = sortItems(all.filter(fn));
     let body;
-    if (key === 'players') {
+    if (key === 'games') {
+      body = gamesBoard(gameLines);
+    } else if (key === 'players') {
       body = playerToggle() + playersGrid(S.allPlayers ? filtered(allPlayerProps()) : items);
     } else {
       body = items.length ? sportSections(items, xs => `<div class="grid">${xs.map(x => pickCard_(x)).join('')}</div>`)
