@@ -847,7 +847,7 @@
         const v = k?.vibe || analyzeProp(x, logs, bd, side);
         if (!k) v.items.push(...kalshiNote(x, kp));
         v.score = scoreOf(v.items);
-        x.vibe = { score: v.score, items: v.items.slice(0, 3), hit: v.hit ? { hits: v.hit.hits, n: v.hit.n, h5: v.hit.h5, n5: v.hit.n5, avg: +v.hit.avg.toFixed(1), l10: +v.hit.l10.toFixed(2), vals: v.hit.vals } : undefined };
+        x.vibe = { score: v.score, items: k ? v.items.slice(0, 3) : v.items.filter(i => i.tone !== "n").slice(0, 2), hit: v.hit ? { hits: v.hit.hits, n: v.hit.n, h5: v.hit.h5, n5: v.hit.n5, avg: +v.hit.avg.toFixed(1), l10: +v.hit.l10.toFixed(2), vals: v.hit.vals } : undefined };
       }
     });
     log(`player stats added for ${Object.keys(byPlayer).length} players on the board`);
@@ -1223,8 +1223,9 @@
             const code = (m.event_ticker.split('-')[1] || '').replace(/^\d{2}[A-Z]{3}\d{2}/, '');
             const g = await gameFor(sport, code, when);
             if (!g) continue;
-            const t = new Date(g.start) - now;
-            if (t <= 0 || t > windowH * 36e5) continue;
+            // Kalshi is free, so NFL gets the whole week (Sunday + MNF show up from Thursday); others stay at ~30h
+            const t = new Date(g.start) - now, win = sport === 'americanfootball_nfl' ? 100 : windowH;
+            if (t <= 0 || t > win * 36e5) continue;
             if (isTeam) {
               const who = (m.title.match(/^(.*?) over /i) || [])[1] || m.yes_sub_title || '';
               const team = labelMatch(g.home, who) || labelMatch(who, g.home.split(' ')[0]) ? g.home : labelMatch(g.away, who) || labelMatch(who, g.away.split(' ')[0]) ? g.away : null;
