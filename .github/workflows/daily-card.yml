@@ -64,7 +64,10 @@ jobs:
           git diff --cached --quiet || git commit -m "Daily card $(date -u +%F)"
           git push
 
+      # Publishing: if Pages is set to "GitHub Actions" these deploy the site; if Pages is set to
+      # "Deploy from a branch" (main / root) GitHub publishes the committed files itself and these can be skipped.
       - uses: actions/configure-pages@v5
+        continue-on-error: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
@@ -76,6 +79,7 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
+    continue-on-error: true
     steps:
       - id: deploy
         uses: actions/deploy-pages@v4
