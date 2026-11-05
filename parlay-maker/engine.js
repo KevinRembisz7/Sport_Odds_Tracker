@@ -341,7 +341,11 @@
         const home = side(best.h), away = side(best.a), pr = sum.predictor;
         const model = pr?.homeTeam?.gameProjection
           ? { [home.name]: +pr.homeTeam.gameProjection / 100, [away.name]: +pr.awayTeam.gameProjection / 100 } : null;
-        return { home, away, model, kind: S.kind, espnId: best.e.id };
+        const ven = best.e.competitions[0].venue || {}, w = sum.gameInfo?.weather;
+        const venue = { name: ven.fullName || sum.gameInfo?.venue?.fullName || '', city: ven.address?.city || '', state: ven.address?.state || '',
+          country: ven.address?.country || '', indoor: ven.indoor === true };
+        const weather = w ? { temp: w.temperature ?? w.highTemperature, gust: w.gust, precipChance: w.precipitation } : null;
+        return { home, away, model, kind: S.kind, espnId: best.e.id, venue, weather, start: best.e.date };
       })().catch(() => null);
     }
     function roster(sport, teamId) {
@@ -761,6 +765,8 @@
       const bd = await espn.breakdown(l);
       if (bd) card.games[l.eventId] = bd;
       l.vibe = bd ? analyzeLine(l, bd, fairML) : { score: 0, items: [{ tone: 'n', text: 'No ESPN matchup data for this game — the edge is pure price.' }] };
+      const ex = await extraNotes(l, bd, { getJSON, get, fairML }).catch(() => []);
+      if (ex.length) { l.vibe.items.push(...ex); l.vibe.score = scoreOf(l.vibe.items); }
     });
     await mapLimit(props, 6, async p => {
       const bd = await espn.breakdown(p);
@@ -776,6 +782,8 @@
       p.headshot = ath?.headshot || ''; p.team = side ? bd[side].abbr : '';
       if (side) p.opp = bd[side === 'home' ? 'away' : 'home'].abbr;
       p.vibe = analyzeProp(p, logs, bd, side);
+      const ex = await extraNotes(p, bd, { getJSON, get, fairML }).catch(() => []);
+      if (ex.length) { p.vibe.items.push(...ex); p.vibe.score = scoreOf(p.vibe.items); }
     });
     for (const g of Object.values(card.games)) for (const t of [g.home, g.away]) t.injuries = t.injuries.slice(0, 14);
 
@@ -811,6 +819,198 @@
       if (best) return { legs: best.legs.map(l => l.id), dec: best.s.dec, p: best.s.p, ev: best.s.ev };
     }
     return null;
+  }
+
+  // ---------------- extra free data: weather, prediction markets, NHL goalies, nflverse, MLB probables ----------------
+  // All keyless + free. Every source fails soft (no note) if it's down or blocked.
+  const labelMatch = (team, label) => { const n = norm(team), l = norm(label); return !!l && (n === l || n.startsWith(l) || n.endsWith(l) || n.includes(' ' + l + ' ')); };
+  const nickname = t => String(t || '').split(' ').slice(-1)[0];
+
+  async function weatherFor(bd, getJSON) {
+    if (!bd?.venue) return null;
+    if (bd.venue.indoor) return { indoor: true, venue: bd.venue.name };
+    const out = { venue: bd.venue.name, temp: bd.weather?.temp, gust: bd.weather?.gust, precipChance: bd.weather?.precipChance, src: 'ESPN' };
+    try { // Open-Meteo adds sustained wind + snow (free, no key)
+      if (bd.venue.city && bd.start) {
+        const geo = await getJSON(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(bd.venue.city)}&count=5&language=en`);
+        const hit = (geo?.results || []).find(r => !bd.venue.state || (r.admin1 || '').toLowerCase().startsWith(bd.venue.state.toLowerCase().slice(0, 2)) || r.country_code === 'US') || geo?.results?.[0];
+        if (hit) {
+          const fc = await getJSON(`https://api.open-meteo.com/v1/forecast?latitude=${hit.latitude}&longitude=${hit.longitude}&hourly=temperature_2m,precipitation_probability,precipitation,snowfall,wind_speed_10m,wind_gusts_10m&wind_speed_unit=mph&temperature_unit=fahrenheit&timezone=UTC&forecast_days=7`);
+          const times = fc?.hourly?.time || [], k = new Date(bd.start).toISOString().slice(0, 13);
+          const i = times.findIndex(t => t.slice(0, 13) === k);
+          if (i >= 0) Object.assign(out, { wind: fc.hourly.wind_speed_10m[i], gust: Math.max(out.gust || 0, fc.hourly.wind_gusts_10m[i] || 0),
+            temp: fc.hourly.temperature_2m[i], precipChance: fc.hourly.precipitation_probability?.[i] ?? out.precipChance, snow: fc.hourly.snowfall?.[i], src: 'Open-Meteo' });
+        }
+      }
+    } catch (e) {}
+    return out;
+  }
+  function weatherNotes(w, x) {
+    if (!w || w.indoor) return x.market === 'totals' && w?.indoor ? [{ tone: 'n', text: `🏟️ Indoors at ${esc(w.venue)} — weather won't matter` }] : [];
+    const bad = [], windy = (w.wind ?? 0) >= 15 || (w.gust ?? 0) >= 25, wet = (w.precipChance ?? 0) >= 60, snow = (w.snow ?? 0) > 0.1, cold = w.temp != null && w.temp <= 25;
+    if (windy) bad.push(`💨 Wind ${w.wind != null ? Math.round(w.wind) + ' mph' : ''}${w.gust ? ` (gusts ${Math.round(w.gust)})` : ''} — tough for passing &amp; kicking`);
+    if (snow) bad.push('❄️ Snow in the forecast');
+    else if (wet) bad.push(`🌧️ Rain likely (${Math.round(w.precipChance)}%)`);
+    if (cold) bad.push(`🥶 ${Math.round(w.temp)}°F at kickoff`);
+    if (!bad.length) return [];
+    const over = /^over/i.test(x.pick) || x.side === 'Over';
+    if (x.type === 'line' && x.market === 'totals') return bad.map(t => ({ tone: over ? 'b' : 'g', text: t + ' — leans under' }));
+    if (x.type === 'prop' && /pass|reception/.test(x.market)) return bad.map(t => ({ tone: over ? 'b' : 'g', text: t }));
+    if (x.type === 'prop' && /rush/.test(x.market) && windy) return [{ tone: over ? 'g' : 'b', text: '💨 Windy — teams tend to run more' }];
+    return bad.map(t => ({ tone: 'n', text: t }));
+  }
+
+  const KALSHI = { NFL: 'KXNFLGAME', NBA: 'KXNBAGAME', NHL: 'KXNHLGAME', NCAAF: 'KXNCAAFGAME', NCAAB: 'KXNCAAMBGAME', EPL: 'KXEPLGAME', MLB: 'KXMLBGAME' };
+  const POLY = { NFL: 'nfl', NBA: 'nba', NHL: 'nhl' };
+  async function marketsFor(x, getJSON) {
+    if (x.type !== 'line' || !x.team || x.market === 'totals') return [];
+    const out = [], t0 = new Date(x.start);
+    try {
+      const ser = KALSHI[x.lg];
+      if (ser) {
+        const d = await getJSON(`https://api.elections.kalshi.com/trade-api/v2/markets?limit=1000&status=open&series_ticker=${ser}`);
+        const evs = {};
+        for (const m of d?.markets || []) (evs[m.event_ticker] ||= []).push(m);
+        for (const ms of Object.values(evs)) {
+          const when = new Date(ms[0].occurrence_datetime || ms[0].expected_expiration_time);
+          if (Math.abs(when - t0) > 36 * 36e5) continue;
+          const home = ms.find(m => labelMatch(x.home, m.yes_sub_title)), away = ms.find(m => labelMatch(x.away, m.yes_sub_title));
+          if (!home || !away) continue;
+          const mid = m => { const b = +m.yes_bid_dollars, a = +m.yes_ask_dollars; return b > 0 && a > 0 && a - b <= 0.06 ? (a + b) / 2 : null; };
+          const mids = ms.map(mid);
+          if (mids.some(v => v == null)) break; // too thin to trust
+          const tot = mids.reduce((a, b) => a + b, 0), mine = ms.find(m => labelMatch(x.team, m.yes_sub_title));
+          if (mine) out.push({ src: 'Kalshi', p: mid(mine) / tot });
+          break;
+        }
+      }
+      const tag = POLY[x.lg];
+      if (tag) {
+        const evs = await getJSON(`https://gamma-api.polymarket.com/events?limit=200&closed=false&tag_slug=${tag}&order=startDate&ascending=false`);
+        for (const e of evs || []) {
+          const m = (e.markets || []).find(mm => mm.sportsMarketType === 'moneyline') || e.markets?.[0];
+          if (!m?.gameStartTime || Math.abs(new Date(m.gameStartTime.replace(' ', 'T').replace('+00', 'Z')) - t0) > 12 * 36e5) continue;
+          const outs = JSON.parse(m.outcomes || '[]'), prices = JSON.parse(m.outcomePrices || '[]').map(Number);
+          if (outs.length !== 2 || !outs.some(o => labelMatch(x.home, o)) || !outs.some(o => labelMatch(x.away, o))) continue;
+          if (!(m.bestAsk - m.bestBid <= 0.04)) break; // thin
+          const i = outs.findIndex(o => labelMatch(x.team, o));
+          if (i >= 0) out.push({ src: 'Polymarket', p: prices[i] });
+          break;
+        }
+      }
+    } catch (e) {}
+    return out;
+  }
+  function marketNotes(ms, x, fair) {
+    if (!ms.length || fair == null) return [];
+    const p = ms.reduce((a, m) => a + m.p, 0) / ms.length, d = p - fair, who = ms.map(m => m.src).join(' + ');
+    const t = x.market === 'h2h' ? x.team : `${x.team} to win`;
+    if (d >= 0.04) return [{ tone: 'g', text: `📈 ${who} traders give ${esc(t)} <b>${pct(p, 0)}</b> vs ${pct(fair, 0)} fair — real-money markets agree` }];
+    if (d <= -0.04) return [{ tone: 'b', text: `📉 ${who} traders only give ${esc(t)} <b>${pct(p, 0)}</b> vs ${pct(fair, 0)} fair` }];
+    return [{ tone: 'n', text: `📊 ${who}: ${esc(t)} ${pct(p, 0)} — in line with fair (${pct(fair, 0)})` }];
+  }
+
+  async function nhlGoalies(x, bd, getJSON) {
+    try {
+      const day = new Date(new Date(x.start).toLocaleString('en-US', { timeZone: 'America/New_York' })), ds = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+      const sch = await getJSON(`https://api-web.nhle.com/v1/schedule/${ds}`);
+      const nm = t => `${t.placeName?.default || ''} ${t.commonName?.default || ''}`;
+      const g = (sch?.gameWeek || []).flatMap(w => w.games || []).find(gg => labelMatch(x.home, gg.homeTeam?.commonName?.default) && labelMatch(x.away, gg.awayTeam?.commonName?.default));
+      if (!g) return null;
+      const lp = await getJSON(`https://api-web.nhle.com/v1/gamecenter/${g.id}/landing`), gc = lp?.matchup?.goalieComparison;
+      if (!gc) return null;
+      const pickG = (side, team) => {
+        const inj = new Set((team?.injuries || []).filter(p => MISSING(p.status)).map(p => normName(p.name)));
+        const L = [...(gc[side]?.leaders || [])].filter(l => l.savePctg != null).sort((a, b) => (b.gamesPlayed || 0) - (a.gamesPlayed || 0))
+          .filter(l => ![...inj].some(n => n.endsWith(normName(String(l.name?.default || '').split(' ').slice(-1)[0]))));
+        return L[0] ? { name: L[0].name?.default, sv: L[0].savePctg, gaa: L[0].gaa, gp: L[0].gamesPlayed, team: nm(lp[side]) } : null;
+      };
+      return { home: pickG('homeTeam', bd?.home), away: pickG('awayTeam', bd?.away) };
+    } catch (e) { return null; }
+  }
+  function goalieNotes(G, x, bd) {
+    if (!G?.home || !G?.away) return [];
+    const f = g => `${esc(g.name)} (${g.sv.toFixed(3).replace(/^0/, '')}, ${g.gaa?.toFixed(2)} GAA)`;
+    if (x.type === 'line' && x.team) {
+      const mine = norm(x.team) === norm(x.home) ? G.home : G.away, theirs = mine === G.home ? G.away : G.home, d = mine.sv - theirs.sv;
+      const tone = d >= 0.015 ? 'g' : d <= -0.015 ? 'b' : 'n';
+      return [{ tone, text: `🥅 Likely goalies: ${f(mine)} vs ${f(theirs)}${tone === 'g' ? ' — goalie edge' : tone === 'b' ? ' — goalie disadvantage' : ''}` }];
+    }
+    if (x.type === 'line' && x.market === 'totals') {
+      const avg = (G.home.sv + G.away.sv) / 2, over = /^over/i.test(x.pick);
+      if (avg <= 0.895) return [{ tone: over ? 'g' : 'b', text: `🥅 Leaky goalies: ${f(G.away)} / ${f(G.home)}` }];
+      if (avg >= 0.915) return [{ tone: over ? 'b' : 'g', text: `🧱 Hot goalies: ${f(G.away)} / ${f(G.home)}` }];
+      return [];
+    }
+    // goalie quality moves goals/points/assists, not shot volume
+    if (x.type === 'prop' && /^player_(points|assists|goals)/.test(x.market) && x.team && bd) {
+      const og = x.team === bd.home?.abbr ? G.away : x.team === bd.away?.abbr ? G.home : null; // the goalie he shoots on
+      if (!og) return [];
+      const over = x.side === 'Over';
+      if (og.sv <= 0.89) return [{ tone: over ? 'g' : 'b', text: `🥅 Faces a leaky goalie: ${f(og)}` }];
+      if (og.sv >= 0.92) return [{ tone: over ? 'b' : 'g', text: `🧱 Faces a hot goalie: ${f(og)}` }];
+    }
+    return [];
+  }
+
+  let nflverseP = null;
+  function nflverse(get) {
+    return nflverseP ||= (async () => {
+      const now = new Date(), season = now.getUTCMonth() >= 7 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
+      const r = await get(`https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_${season}.csv`);
+      const text = typeof r.json === 'string' ? r.json : '';
+      const lines = text.trim().split(/\r?\n/), head = lines.shift().split(',').map(h => h.replace(/"/g, ''));
+      const ix = n => head.indexOf(n), by = {};
+      const c = { name: ix('player_display_name'), wk: ix('week'), st: ix('season_type'), tgt: ix('targets'), ts: ix('target_share'), car: ix('carries'), att: ix('attempts'), wopr: ix('wopr'), ry: ix('receiving_yards') };
+      // quote-aware split (the headshot URL column has commas inside quotes)
+      const split = ln => { const out = []; let cur = '', q = false; for (const ch of ln) { if (ch === '"') q = !q; else if (ch === ',' && !q) { out.push(cur); cur = ''; } else cur += ch; } out.push(cur); return out; };
+      for (const ln of lines) {
+        const v = split(ln);
+        if (c.st >= 0 && v[c.st] && v[c.st] !== 'REG') continue;
+        const k = normName(v[c.name]); if (!k) continue;
+        (by[k] ||= []).push({ wk: +v[c.wk], tgt: +v[c.tgt] || 0, ts: v[c.ts] === '' ? null : +v[c.ts], car: +v[c.car] || 0, att: +v[c.att] || 0 });
+      }
+      for (const k in by) by[k].sort((a, b) => b.wk - a.wk);
+      return by;
+    })().catch(() => ({}));
+  }
+  function nflverseNotes(rows, x) {
+    if (!rows?.length) return [];
+    const last = rows.slice(0, 4), avg = (a, f) => a.reduce((s2, r) => s2 + f(r), 0) / a.length;
+    const over = x.side === 'Over', T = t => over ? t : t === 'g' ? 'b' : t === 'b' ? 'g' : t, out = [];
+    if (/reception/.test(x.market)) {
+      const ts = avg(last.filter(r => r.ts != null), r => r.ts), tg = avg(last, r => r.tgt), tsAll = avg(rows.filter(r => r.ts != null), r => r.ts);
+      if (!isNaN(ts)) out.push({ tone: T(ts >= 0.24 ? 'g' : ts <= 0.12 ? 'b' : 'n'), text: `🎯 Target share <b>${pct(ts, 0)}</b> last ${last.length} games (${tg.toFixed(1)} targets/game)` });
+      if (!isNaN(ts) && !isNaN(tsAll) && rows.length > 4 && Math.abs(ts - tsAll) >= 0.05) out.push({ tone: T(ts > tsAll ? 'g' : 'b'), text: `${ts > tsAll ? '📈 Role growing' : '📉 Role shrinking'}: ${pct(ts, 0)} lately vs ${pct(tsAll, 0)} on the season` });
+    } else if (/rush/.test(x.market)) {
+      const car = avg(last, r => r.car);
+      out.push({ tone: T(car >= 16 ? 'g' : car <= 8 ? 'b' : 'n'), text: `🏃 ${car.toFixed(1)} carries/game last ${last.length}` });
+    } else if (/pass/.test(x.market)) {
+      const att = avg(last, r => r.att);
+      out.push({ tone: T(att >= 36 ? 'g' : att <= 26 ? 'b' : 'n'), text: `🏈 ${att.toFixed(1)} pass attempts/game last ${last.length}` });
+    }
+    return out;
+  }
+
+  async function mlbProbables(x, getJSON) {
+    try {
+      const d = new Date(new Date(x.start).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const sch = await getJSON(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${ds}&hydrate=probablePitcher`);
+      const g = (sch?.dates || []).flatMap(dd => dd.games || []).find(gg => labelMatch(x.home, gg.teams?.home?.team?.name) || labelMatch(gg.teams?.home?.team?.name || '', nickname(x.home)));
+      const hp = g?.teams?.home?.probablePitcher?.fullName, ap = g?.teams?.away?.probablePitcher?.fullName;
+      return hp || ap ? [{ tone: 'n', text: `⚾ Probable pitchers: ${esc(ap || 'TBD')} vs ${esc(hp || 'TBD')}` }] : [];
+    } catch (e) { return []; }
+  }
+
+  async function extraNotes(x, bd, ctx) {
+    const { getJSON, get, fairML } = ctx, out = [];
+    if (bd && (bd.kind === 'fb' || x.sport === 'baseball_mlb')) out.push(...weatherNotes(await weatherFor(bd, getJSON), x));
+    if (x.type === 'line') out.push(...marketNotes(await marketsFor(x, getJSON), x, fairML?.[x.eventId]?.[x.team] ?? (x.market === 'h2h' ? x.fairP : null)));
+    if (x.sport === 'icehockey_nhl') out.push(...goalieNotes(await nhlGoalies(x, bd, getJSON), x, bd));
+    if (x.sport === 'americanfootball_nfl' && x.type === 'prop') out.push(...nflverseNotes((await nflverse(get))[normName(x.player)], x));
+    if (x.sport === 'baseball_mlb' && x.type === 'line') out.push(...await mlbProbables(x, getJSON));
+    return out;
   }
 
   // ---------------- grading (results from ESPN finals) ----------------
@@ -947,7 +1147,8 @@
   const Engine = { SPORTS, PROP_STATS, STALE, PROP_STALE, toDec, toAm, pct, esc, devig, norm, normName,
     legsFromEvents, propsFromEvent, oneSidedFromEvent, altsFromEvent, altPropsFromEvent, ladderModel, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
     parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
-    pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult, liveStatus };
+    pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult, liveStatus,
+    extraNotes, weatherFor, marketsFor, nhlGoalies, nflverse };
   root.Engine = Engine;
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -14,7 +14,7 @@ if (!key && !args.includes('--reanalyze')) { console.error('Set ODDS_API_KEY'); 
 const get = async url => {
   const r = await fetch(url, { headers: { 'user-agent': 'edge-lab-daily/1.0', accept: 'application/json' } });
   if (!r.ok) throw new Error(`${r.status} ${url.replace(/apiKey=[^&]+/, 'apiKey=***').slice(0, 120)}`);
-  return { json: await r.json(), headers: n => r.headers.get(n) };
+  return { json: /\.csv(\?|$)/.test(url) ? await r.text() : await r.json(), headers: n => r.headers.get(n) };
 };
 
 (async () => {

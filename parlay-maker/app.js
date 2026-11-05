@@ -520,6 +520,7 @@
         <div class="card"><h3>🧮 Parlays</h3><p>Edges multiply: three +3% legs ≈ +9.3%. Three normal −110 legs ≈ −13%, which is why random parlays bleed money. Only +EV legs, one per game — same-game legs are correlated.</p></div>
         <div class="card"><h3>💰 Kelly stake</h3><p>Stake = (b·p − q)/b of bankroll — the size that grows a bankroll fastest long-run. Default is ¼ Kelly because parlays swing hard. Tiny stakes are a feature, not a bug.</p></div>
         <div class="card"><h3>⏰ Auto-updates</h3><p>A GitHub Action rebuilds this card every morning and spends a slice of your monthly Odds API credits (credits left ÷ days left). Hit <b>↻ Live refresh</b> with your key for fresh lines any time.</p></div>
+        <div class="card"><h3>🔌 Free data feeds</h3><p>Odds: The Odds API (your credits). Everything else is free, no keys: <b>ESPN</b> (stats, injuries, live scores, DraftKings lines), <b>NHL API</b> (likely starting goalies + save %), <b>nflverse</b> (NFL target share &amp; usage), <b>Open-Meteo</b> + ESPN (wind, rain, snow, cold at outdoor stadiums), <b>Kalshi</b> + <b>Polymarket</b> (real-money prediction markets as a second opinion), <b>MLB Stats API</b> (probable pitchers, in season).</p></div>
         <div class="card"><h3>⚠️ Real talk</h3><p>Edges are small and variance is huge — a +10% EV parlay at 15% hit chance still loses 85% of the time. Books limit winners. Edges over 15% are usually stale lines and get flagged. Bet what you can lose.</p></div>
       </div>`;
   }
@@ -661,7 +662,7 @@
     if (!S.key) { openSettings(); return; }
     openDrawer('↻ Live refresh', `<p class="note">Pulling fresh lines + props for games in the next 30h (max ${S.budget} credits; change it in ⚙️ Settings)…</p><div class="log" id="log"></div>`);
     const log = m => { const el = $('log'); if (el) { el.textContent += m + '\n'; el.scrollTop = 1e9; } };
-    const get = async url => { const r = await fetch(url); if (!r.ok) throw new Error(r.status + ''); return { json: await r.json(), headers: n => r.headers.get(n) }; };
+    const get = async url => { const r = await fetch(url); if (!r.ok) throw new Error(r.status + ''); return { json: /\.csv(\?|$)/.test(url) ? await r.text() : await r.json(), headers: n => r.headers.get(n) }; };
     try {
       const c = await E.buildCard({ get, key: S.key, budget: S.budget, allowAll: S.allBooks, log });
       card = c; store.set('liveCard', c); index(); render();
