@@ -411,7 +411,7 @@
   }
   const allPlayerProps = () => (card.board || []).filter(x => x.type === 'prop').map(x => byId[x.id] || x)
     .concat(card.props.filter(p => !(card.board || []).some(b => b.id === p.id)));
-  const playerToggle = () => `<div class="seg small"><button class="${S.allPlayers ? '' : 'on'}" data-allp="0">⭐ +EV only</button><button class="${S.allPlayers ? 'on' : ''}" data-allp="1">🧍 Every player (fair odds)</button></div>`;
+  const playerToggle = () => `<div class="seg small"><button class="${S.allPlayers ? '' : 'on'}" data-allp="0">⭐ +EV only</button><button class="${S.allPlayers ? 'on' : ''}" data-allp="1">🧍 Every player (fair odds)</button><button data-tab="alts">🪜 Alt lines</button></div>`;
   function playersGrid(items) {
     const groups = {};
     for (const x of items) (groups[x.player] ||= []).push(x);
@@ -532,7 +532,8 @@
   function viewAlts() {
     const items = filtered(altProps());
     const plus = items.filter(x => x.dec && x.ev >= 0.01 && !isSus(x));
-    return `<div class="sec"><h2>🪜 Alt Lines</h2><span>${items.length} lines · ${new Set(items.map(x => x.player)).size} players · 30+ / 40+ / 50+ yards, anytime TD, 20+ points and more</span></div>
+    return `<div class="seg small"><button data-tab="props" data-allp-go="0">⭐ +EV only</button><button data-tab="props" data-allp-go="1">🧍 Every player (fair odds)</button><button class="on">🪜 Alt lines</button></div>
+      <div class="sec"><h2>🪜 Alt Lines</h2><span>${items.length} lines · ${new Set(items.map(x => x.player)).size} players · 30+ / 40+ / 50+ yards, anytime TD, 20+ points and more</span></div>
       <div class="howto">Every rung of every player's ladder with its <b>fair odds</b>, how often he's cleared it lately, and your <b>bet365 target</b>. <b>Green edge</b> = a sportsbook is paying more than fair right now${plus.length ? ` (<b>${plus.length}</b> on the board)` : ''}. Pick a sport and a stat up top to narrow it down.</div>
       ${playersGrid(items)}`;
   }
@@ -804,6 +805,7 @@
     if (!el) return;
     if (el.dataset.add) { e.stopPropagation(); toggleSlip(el.dataset.add); return; }
     if (el.dataset.open) { openDetail(el.dataset.open); return; }
+    if (el.dataset.allpGo) { S.allPlayers = el.dataset.allpGo === '1'; store.set('allPlayers', S.allPlayers); }
     if (el.dataset.tab) { e.preventDefault(); window.scrollTo({ top: 0 }); S.tab = el.dataset.tab; store.set('tab', S.tab); S.market = 'ALL'; render(); return; }
     if (el.dataset.lg) { S.lg = el.dataset.lg; S.market = 'ALL'; render(); return; }
     if (el.dataset.mk) { S.market = el.dataset.mk; render(); return; }
