@@ -429,6 +429,36 @@
       ${pos ? `<span class="edge">${signPct(x.ev)}</span>` : ''}
     </div>`;
   }
+  function legendHTML(est) {
+    const open = store.get('legendOpen', true);
+    const row = (sample, text) => `<div class="lgrow"><div class="lgs">${sample}</div><div class="lgt">${text}</div></div>`;
+    const cell = (cls, body) => `<div class="gcell ${cls}" style="cursor:default;min-width:88px">${body}</div>`;
+    return `<details class="legend" ${open ? 'open' : ''} data-legend>
+      <summary>📖 Legend <span class="muted">how to read the game cards</span></summary>
+      <div class="lggrid">
+        <div>
+          <h4>Best bet on each game</h4>
+          ${row('<div class="gpick ev" style="cursor:default">⭐ Pick</div>', '<b>Sharp +EV.</b> The price beats the true odds. Your best bets.')}
+          ${row('<div class="gpick lean" style="cursor:default">⭐ Lean</div>', '<b>Data lean.</b> No price edge, but the matchup (vibe +2 or better) points this way. Normal stake.')}
+          ${row('<div class="gpick slight" style="cursor:default">☆ Slight lean</div>', '<b>Weak signal.</b> Best side on the data, nothing strong. Small stake or skip.')}
+          <h4 style="margin-top:12px">Box outlines</h4>
+          ${row(cell('star ev', '<span class="gstar">⭐</span><b>O 6.5</b>'), 'Gold outline = the ⭐ Pick or Lean for this game')}
+          ${row(cell('star slight', '<span class="gstar">☆</span><b>+1.5</b>'), 'Grey outline = the ☆ Slight lean')}
+          ${row(cell('pos', '<b>ML</b><span class="edge">+4.2%</span>'), 'Green box = +EV right now (with the edge %)')}
+        </div>
+        <div>
+          <h4>Inside each box</h4>
+          ${row(cell('', '<b>−3.5</b><span class="ghit">57% to hit · <span class="good">+2</span></span><span class="gp">−110</span><small>fair −125 · 365 ≥ −118</small>'),
+            `<b>−3.5</b> the line (spread, total O/U, or ML)<br><b>57% to hit</b> true chance this side wins<br><b>+2</b> vibe (matchup score)<br><b>−110</b> best price found<br><b>fair −125</b> the no-vig price${B365() ? '<br><b>365 ≥ −118</b> bet it at bet365 only at this price or better' : ''}`)}
+          <h4 style="margin-top:12px">Vibe (matchup score)</h4>
+          ${row('<span class="good" style="font-size:15px">+2</span>&nbsp;<span class="muted">or more</span>', 'Injuries, form, goalies, weather, model and markets back this side')}
+          ${row('<span style="font-size:15px">−1 to +1</span>', 'Mixed or no strong signal')}
+          ${row('<span class="bad" style="font-size:15px">−2</span>&nbsp;<span class="muted">or less</span>', 'The data argues against this side')}
+          ${est ? row('<b>fair*</b>', 'The asterisk means the fair price is estimated from DraftKings (free, via ESPN). Fine for bet365 targets, but it can’t spot edges, so those boxes never turn green.') : ''}
+        </div>
+      </div>
+    </details>`;
+  }
   function gamesBoard(items) {
     const games = {};
     for (const x of items) {
@@ -468,7 +498,7 @@
       </article>`;
     };
     const est = items.some(x => x.espnLine);
-    return toggle + `<p class="note" style="margin-top:-4px">⭐ <b>Pick</b> = a sharp +EV side. ⭐ <b>Lean</b> = no price edge, but the matchup data (vibe +2 or better) points that way. ☆ <b>Slight lean</b> = the best side on the data, but the signal is weak. Each box: the line, hit %, vibe, best price, fair price${B365() ? ', your bet365 target' : ''}. Green = +EV. Tap a box for details or to add it to your slip.${est ? ' <b>*</b> = fair estimated from DraftKings (free via ESPN) for games we didn\u2019t buy sharp lines for: good for bet365 targets, not for spotting edges.' : ''}</p>`
+    return toggle + legendHTML(est)
       + sportSections(list, gs => `<div class="ggrid">${gs.map(card1).join('')}</div>`);
   }
   function viewBoard() {
@@ -763,6 +793,7 @@
   document.addEventListener('input', e => {
     if (e.target.id === 'q') { S.q = e.target.value; const pos = e.target.selectionStart; render(); const q = $('q'); q.focus(); q.setSelectionRange(pos, pos); }
   });
+  document.addEventListener('toggle', e => { if (e.target.matches?.('[data-legend]')) store.set('legendOpen', e.target.open); }, true);
   document.addEventListener('change', e => {
     if (e.target.id === 'sort') { S.sort = e.target.value; render(); }
     if (e.target.id === 'type') { S.type = e.target.value; S.shown = 120; render(); }
