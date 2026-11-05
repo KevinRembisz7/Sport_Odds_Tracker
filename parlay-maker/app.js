@@ -389,7 +389,7 @@
     return `<div class="gcell ${pos ? 'pos' : ''}" data-open="${esc(x.id)}">
       <b>${esc(label)}</b>
       <span class="gp">${x.dec ? toAm(x.dec) : toAm(1 / x.fairP)}</span>
-      <small>${B365() ? `<span class="wide">${x.dec ? `fair ${toAm(1 / x.fairP)} · ` : ''}</span>365 ≥ ${targetAm(x)}` : x.dec ? `fair ${toAm(1 / x.fairP)}` : 'fair'}</small>
+      <small>${B365() ? `<span class="wide">${x.dec ? `fair${x.espnLine ? '*' : ''} ${toAm(1 / x.fairP)} · ` : ''}</span>365 ≥ ${targetAm(x)}` : x.dec ? `fair${x.espnLine ? '*' : ''} ${toAm(1 / x.fairP)}` : 'fair'}</small>
       ${pos ? `<span class="edge">${signPct(x.ev)}</span>` : ''}
     </div>`;
   }
@@ -421,7 +421,8 @@
         ${g.ml.Draw ? `<div class="grow"><div class="gteam"><span>Draw</span></div><div></div><div></div>${gameCell(g.ml.Draw, 'Draw')}</div>` : ''}
       </article>`;
     };
-    return `<p class="note" style="margin-top:-4px">Every game on the board. Each box: the line, best price, fair price${B365() ? ', your bet365 target' : ''}. Green = +EV. Tap a box for details or to add it to your slip.</p>`
+    const est = items.some(x => x.espnLine);
+    return `<p class="note" style="margin-top:-4px">Each box: the line, best price, fair price${B365() ? ', your bet365 target' : ''}. Green = +EV. Tap a box for details or to add it to your slip.${est ? ' <b>*</b> = fair estimated from DraftKings (free via ESPN) for games we didn\u2019t buy sharp lines for: good for bet365 targets, not for spotting edges.' : ''}</p>`
       + sportSections(list, gs => `<div class="ggrid">${gs.map(card1).join('')}</div>`);
   }
   function viewBoard() {
@@ -452,15 +453,13 @@
         : empty(card.props.length ? 'No props match these filters.' : 'No props on today\'s card — props only get pulled for games starting within ~30h, and only if the daily credit budget allows.')}`;
   }
   function viewLines() {
-    const items = sortItems(filtered(card.lines));
-    if (!items.length) return empty('No +EV game lines match these filters.');
-    return `<div class="sec"><h2>Game lines</h2><span>moneylines, spreads &amp; totals vs Pinnacle no-vig</span></div>
-      <div class="tbl"><div class="scroll"><table><thead><tr><th></th><th>Pick</th><th>Game</th><th>Start</th><th>Price</th><th>Book</th><th>Fair</th><th>True %</th><th>Edge</th><th>Vibe</th><th></th></tr></thead><tbody>
-      ${items.map(x => `<tr data-open="${esc(x.id)}"><td><span class="tag">${x.emoji} ${esc(x.lg)}</span></td><td><b>${esc(x.pick)}</b></td><td class="muted">${esc(x.game)}</td>
-        <td class="muted">${esc(fmtTime(x.start))}</td><td><b>${toAm(x.dec)}</b></td><td>${esc(x.book)}</td><td class="muted">${toAm(1 / x.fairP)}</td><td>${pct(x.fairP)}</td>
-        <td><span class="edge">${signPct(x.ev)}</span>${isSus(x) ? ' <span class="sus">⚠ sus</span>' : ''}</td><td><span class="vibe ${vibeCls(x.vibe)}">${vibeTxt(x.vibe)}</span></td>
-        <td><button class="add ${S.slip.includes(x.id) ? 'in' : ''}" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓' : '+'}</button></td></tr>`).join('')}
-      </tbody></table></div></div>`;
+    const pos = sortItems(filtered(card.lines));
+    const all = filtered((card.board || []).filter(x => x.type === 'line' && !x.alt).map(x => byId[x.id] || x));
+    const nGames = new Set(all.map(x => x.eventId)).size;
+    return `<div class="sec"><h2>📊 Game lines</h2><span>${nGames} games · spread, total and moneyline for every game</span></div>
+      ${pos.length ? `<div class="sec sub"><h2>🟢 +EV right now</h2><span>priced vs Pinnacle no-vig</span></div><div class="grid">${pos.slice(0, 9).map(x => pickCard_(x)).join('')}</div>
+        <div class="sec sub"><h2>🏟️ Every game</h2></div>` : ''}
+      ${all.length ? gamesBoard(all) : empty('No upcoming games with lines yet. The card rebuilds every morning.')}`;
   }
   function viewSheet() {
     if (!card.board?.length) return empty('The full fair-odds sheet arrives with the next daily build (or hit ↻ Live refresh).');
@@ -556,7 +555,7 @@
       return;
     }
     const v = { top: viewTop, board: viewBoard, live: viewLive, money: viewMoney, record: viewRecord, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
-    renderFilters(S.tab === 'board' ? [...card.lines, ...card.props] : S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' || S.tab === 'live' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? (S.allPlayers ? allPlayerProps() : card.props) : S.tab === 'lines' ? card.lines : [...card.lines, ...card.props], { markets: S.tab === 'props', sheet: S.tab === 'sheet' });
+    renderFilters(S.tab === 'board' ? [...card.lines, ...card.props] : S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' || S.tab === 'live' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? (S.allPlayers ? allPlayerProps() : card.props) : S.tab === 'lines' ? (card.board || []).filter(x => x.type === 'line' && !x.alt) : [...card.lines, ...card.props], { markets: S.tab === 'props', sheet: S.tab === 'sheet' });
     $('view').innerHTML = v();
   }
 
@@ -643,6 +642,9 @@
       <label>The Odds API key <input id="sKey" type="password" value="${esc(S.key)}" placeholder="free at the-odds-api.com"></label>
       <label>Credits per live refresh <input id="sBudget" type="number" min="3" value="${esc(S.budget)}"></label>
       <p class="note">~3 credits per sport with games today, ~3–5 per game for props. Sports with nothing on the schedule cost 0. Free tier = 500/month, shared with the daily build.</p>
+      ${card?.creditPlan ? (() => { const cp = card.creditPlan, used = Math.max(0, 500 - cp.left), proj = Math.round(used + cp.perDay * cp.daysLeft + cp.reserve);
+        return `<div class="howto">📅 <b>Monthly goal: stay on the free 500.</b> Used <b>${used}</b> of 500 · on pace to finish the month around <b>${Math.min(500, proj)}</b> · the daily build never spends past what's left, and The Odds API free plan simply stops (never bills) at 0.
+          <div class="track" style="margin-top:8px;height:8px"><i style="width:${Math.min(100, used / 5)}%;background:var(--edge)"></i></div></div>`; })() : ''}
       ${card?.creditPlan ? `<div class="howto">🪙 <b>${card.creditPlan.left}</b> credits left · <b>${card.creditPlan.daysLeft}</b> days to go · daily pace <b>~${card.creditPlan.perDay}</b> · reserve for your refreshes <b>${card.creditPlan.reserve}</b>. The daily build spends more on big Saturdays and Sundays and less early in the week.</div>` : ''}
       <label>My sportsbook <select id="sMyBook"><option value="bet365">bet365 (I type in prices)</option><option value="best">Best price across US books</option></select></label>
       <label>Books I can bet <select id="sBooks"><option value="0">US books</option><option value="1" ${S.allBooks ? 'selected' : ''}>All books</option></select></label>

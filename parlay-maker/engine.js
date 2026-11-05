@@ -700,12 +700,62 @@
     return card;
   }
 
+  // Free game lines from ESPN's scoreboard (DraftKings' ML / spread / total) for every game we didn't buy lines for.
+  // Fair = DraftKings' own no-vig price, labeled as an estimate — it fills the board and bet365 targets, not EV hunting.
+  async function espnBoardLines(card, getJSON, now, windowH = 30) {
+    const pairs = (card.board || []).filter(x => x.type === 'line' && !x.espnLine).map(x => [x.home, x.away]);
+    const covered = (h, a) => pairs.some(([ph, pa]) => teamMatches(h, ph) >= 2 && teamMatches(a, pa) >= 2);
+    // ESPN's date-range query comes back empty, so ask for each ET day in the window
+    const days = [...new Set([0, 12, 24, windowH].map(h => etDate(new Date(+now + h * 36e5).toISOString())))];
+    const px = v => { if (v == null) return null; const t = String(v).trim().toUpperCase(); if (t === 'EVEN' || t === 'EV') return 100; const n = parseInt(t.replace('+', ''), 10); return isNaN(n) || Math.abs(n) < 100 ? null : n; };
+    const pt = v => v == null ? null : parseFloat(String(v).replace(/^[ou]/i, ''));
+    const cur = side => side?.close || side?.current || side?.open || null;
+    const out = [];
+    for (const [sport, S] of Object.entries(SPORTS)) {
+      if (!S.espn || !S.lines) continue;
+      const sbs = await Promise.all(days.map(d => getJSON(`https://site.api.espn.com/apis/site/v2/sports/${S.espn}/scoreboard?dates=${d}${S.q || '&limit=300'}`)));
+      const seen = new Set();
+      for (const e of sbs.flatMap(sb => sb?.events || [])) {
+        if (seen.has(e.id)) continue; seen.add(e.id);
+        const comp = e.competitions?.[0], t = new Date(e.date) - now;
+        if (!comp || comp.status?.type?.state !== 'pre' || t <= 0 || t > windowH * 36e5) continue;
+        const h = comp.competitors.find(c => c.homeAway === 'home'), a = comp.competitors.find(c => c.homeAway === 'away'), o = comp.odds?.[0];
+        if (!h || !a || !o || covered(h.team, a.team)) continue;
+        const home = h.team.displayName, away = a.team.displayName, eventId = 'espn' + e.id;
+        const base = { type: 'line', espnLine: true, eventId, sport, lg: S.lg, emoji: S.emoji, game: `${away} @ ${home}`, home, away,
+          start: new Date(e.date).toISOString(), book: 'DraftKings', src: 'DraftKings no-vig (est.)' };
+        const add = (market, sides) => {
+          const ok = sides.filter(x => x.am != null);
+          if (ok.length < 2 || ok.length !== sides.length) return;
+          const fair = devig(ok.map(x => toDec(x.am)));
+          ok.forEach((x, i) => { const dec = toDec(x.am); out.push({ ...base, id: `${eventId}${market}${x.key}`, market, team: x.team, point: x.point, pick: x.pick, dec, fairP: fair[i], ev: fair[i] * dec - 1 }); });
+        };
+        const ml = o.moneyline || {}, ps = o.pointSpread || {}, tot = o.total || {};
+        add('h2h', [{ key: 'a', team: away, am: px(cur(ml.away)?.odds), pick: `${away} ML` }, { key: 'h', team: home, am: px(cur(ml.home)?.odds), pick: `${home} ML` },
+          ...(ml.draw ? [{ key: 'd', team: 'Draw', am: px(cur(ml.draw)?.odds), pick: 'Draw ML' }] : [])]);
+        const sa = pt(cur(ps.away)?.line), sh = pt(cur(ps.home)?.line);
+        if (sa != null && sh != null) add('spreads', [{ key: 'a', team: away, point: sa, am: px(cur(ps.away)?.odds), pick: `${away} ${sa > 0 ? '+' : ''}${sa}` },
+          { key: 'h', team: home, point: sh, am: px(cur(ps.home)?.odds), pick: `${home} ${sh > 0 ? '+' : ''}${sh}` }]);
+        const tl = pt(cur(tot.over)?.line);
+        if (tl != null) add('totals', [{ key: 'o', point: tl, am: px(cur(tot.over)?.odds), pick: `Over ${tl}` }, { key: 'u', point: tl, am: px(cur(tot.under)?.odds), pick: `Under ${tl}` }]);
+      }
+    }
+    return out;
+  }
+
   // ESPN matchup + player analysis and prebuilt parlays. Free (no odds credits), so it can be re-run on a saved card.
   async function analyzeCard(card, get, log = () => {}) {
+    // drop anything that has already started (matters when re-running on a saved card)
+    const nowD = new Date(), future = x => !x.start || new Date(x.start) > nowD;
+    card.lines = card.lines.filter(future); card.props = card.props.filter(future);
+    card.board = (card.board || []).filter(x => future(x) && !x.espnLine);
     const { lines, props, fairML } = card;
     card.games = {};
     const cache = {};
     const getJSON = url => cache[url] ||= get(url).then(r => r.json).catch(() => null);
+    const espnLines = await espnBoardLines(card, getJSON, nowD).catch(() => []);
+    card.board.push(...espnLines);
+    log(`free ESPN/DraftKings lines added for ${new Set(espnLines.map(x => x.eventId)).size} more games`);
     const espn = makeEspn(getJSON);
     await mapLimit(lines, 6, async l => {
       const bd = await espn.breakdown(l);
