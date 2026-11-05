@@ -22,7 +22,12 @@
     soccer_uefa_champs_league: { lg: 'UCL', emoji: '⚽', espn: 'soccer/uefa.champions', kind: 'other', lines: 'h2h,spreads,totals', pri: 3, oneSided: true,
       props: ['player_goal_scorer_anytime', 'player_shots_on_target', 'player_shots', 'player_assists'] },
     mma_mixed_martial_arts: { lg: 'MMA', emoji: '🥊', kind: 'other', lines: 'h2h', pri: 4 },
+    // Europa League: sharp lines when the budget has room (lowest priority); US books don't post its player props
+    soccer_uefa_europa_league: { lg: 'UEL', emoji: '⚽', espn: 'soccer/uefa.europa', kind: 'other', lines: 'h2h,spreads,totals', pri: 4 },
     // ESPN-only leagues: free DraftKings lines via ESPN, no Odds API credits
+    espn_uecl: { lg: 'UECL', emoji: '⚽', espn: 'soccer/uefa.europa.conf', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
+    espn_facup: { lg: 'FA Cup', emoji: '🏴', espn: 'soccer/eng.fa', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
+    espn_eflcup: { lg: 'EFL Cup', emoji: '🏴', espn: 'soccer/eng.league_cup', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
     espn_laliga: { lg: 'LaLiga', emoji: '⚽', espn: 'soccer/esp.1', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
     espn_seriea: { lg: 'SerieA', emoji: '⚽', espn: 'soccer/ita.1', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
     espn_bundesliga: { lg: 'Bundesliga', emoji: '⚽', espn: 'soccer/ger.1', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },

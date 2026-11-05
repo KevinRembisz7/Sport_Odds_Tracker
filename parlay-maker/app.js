@@ -124,7 +124,7 @@
     return items.filter(x => (S.lg === 'ALL' || x.lg === S.lg) && (S.market === 'ALL' || x.statLabel === S.market)
       && (S.type === 'ALL' || x.type === S.type) && (!q || E.norm(x.pick + ' ' + x.game).includes(q)));
   }
-  const LG_ORDER = ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'NHL', 'MLB', 'EPL', 'UCL', 'LaLiga', 'SerieA', 'Bundesliga', 'Ligue1', 'MLS', 'ATP', 'WTA', 'MMA'];
+  const LG_ORDER = ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'NHL', 'MLB', 'EPL', 'UCL', 'UEL', 'UECL', 'FA Cup', 'EFL Cup', 'LaLiga', 'SerieA', 'Bundesliga', 'Ligue1', 'MLS', 'ATP', 'WTA', 'MMA'];
   const lgRank = x => { const i = LG_ORDER.indexOf(x.lg); return i < 0 ? 99 : i; };
   function sortItems(items) {
     if (S.sort === 'sport') return [...items].sort((a, b) => lgRank(a) - lgRank(b) || (b.ev ?? -9) - (a.ev ?? -9));
