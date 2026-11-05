@@ -530,10 +530,12 @@
   function viewProps() {
     if (S.allPlayers) return `<div class="sec"><h2>Player props</h2><span>every priced prop, every sport · fair odds${B365() ? ' + bet365 targets' : ''}</span></div>${playerToggle()}${playersGrid(filtered(allPlayerProps()))}`;
     const items = sortItems(filtered(card.props));
+    const morePlayers = new Set(filtered(allPlayerProps()).map(x => x.player)).size - new Set(items.map(x => x.player)).size;
+    const moreHint = morePlayers > 0 ? `<div class="howto" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">🧍 <span><b>${morePlayers} more ${S.lg === 'ALL' ? '' : esc(S.lg) + ' '}players</b> have lines with fair odds, hit rates and bet365 targets (no sportsbook edge right now).</span><button class="btn small" data-allp="1">Show every player →</button></div>` : '';
     return `<div class="sec"><h2>Player props</h2><span>${card.props.length} +EV prop sides · bars = last games vs the line</span></div>
       ${playerToggle()}
-      ${items.length ? `<div class="grid">${items.map(x => pickCard_(x)).join('')}</div>`
-        : empty(card.props.length ? 'No props match these filters.' : 'No props on today\'s card — props only get pulled for games starting within ~30h, and only if the daily credit budget allows.')}`;
+      ${items.length ? `<div class="grid">${items.map(x => pickCard_(x)).join('')}</div><div style="margin-top:14px">${moreHint}</div>`
+        : moreHint + empty(card.props.length ? 'No props match these filters.' : 'No props on today\'s card — props only get pulled for games starting within ~30h, and only if the daily credit budget allows.')}`;
   }
   function viewLines() {
     const pos = sortItems(filtered(card.lines));
