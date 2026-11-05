@@ -1,6 +1,6 @@
 # 🎯 Sport Odds Tracker
 
-_Made by Kevin Rembisz_
+_Made by Kevin Rembisz & William Mah_
 
 **Live site → https://kevinrembisz7.github.io/Sport_Odds_Tracker/parlay-maker/**
 
