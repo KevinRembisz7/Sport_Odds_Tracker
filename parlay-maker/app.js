@@ -90,7 +90,7 @@
     if (t?.logo) return `<div class="avatar logo ${cls}"><img src="${esc(t.logo)}" alt="" loading="lazy" onerror="this.remove()"></div>`;
     return `<div class="avatar ${cls}">${x.emoji || '🎲'}</div>`;
   }
-  const propLabel = x => x.kalshi ? (x.market === 'player_anytime_td' && x.point < 1 ? 'Anytime TD · Kalshi' : x.market === 'player_goal_scorer_anytime' ? 'Anytime goal · Kalshi' : `${Math.floor(x.point) + 1}+ ${x.statLabel} · Kalshi`) : x.alt && x.side === 'Over' ? `${Math.floor(x.point) + 1}+ ${x.statLabel} · ladder` : `${x.side} ${x.point} ${x.statLabel}${x.alt ? ' · alt' : ''}`;
+  const propLabel = x => x.market === 'player_anytime_td' && x.point < 1 && !x.kalshi ? (x.side === 'Over' ? 'Anytime TD' : 'No TD') : x.kalshi ? (x.market === 'player_anytime_td' && x.point < 1 ? 'Anytime TD · Kalshi' : x.market === 'player_goal_scorer_anytime' ? 'Anytime goal · Kalshi' : `${Math.floor(x.point) + 1}+ ${x.statLabel} · Kalshi`) : x.alt && x.side === 'Over' ? `${Math.floor(x.point) + 1}+ ${x.statLabel} · ladder` : `${x.side} ${x.point} ${x.statLabel}${x.alt ? ' · alt' : ''}`;
   function titleOf(x) {
     if (x.type === 'prop') return { n: x.player, p: propLabel(x), g: `${x.team || ''}${x.opp ? ' vs ' + x.opp : ''} · ${x.game}` };
     if (x.market === 'totals') return { n: x.game, p: x.pick, g: 'Game total' };
@@ -133,7 +133,7 @@
   }
 
   // ---------- views ----------
-  const TABS = [['top', '🔥 Top Picks'], ['live', '🔴 Live'], ['money', '💰 Money Builder'], ['board', '🗂️ Bet Board'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['record', '📈 Record'], ['how', '📘 How it works']];
+  const TABS = [['top', '🔥 Top Picks'], ['live', '🔴 Live'], ['money', '💰 Money Builder'], ['board', '🗂️ Bet Board'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['alts', '🪜 Alt Lines'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['record', '📈 Record'], ['how', '📘 How it works']];
   function renderTabs() {
     $('tabs').innerHTML = TABS.map(([k, l]) => [k, k === 'sheet' && B365() ? '📋 bet365 Sheet' : l]).map(([k, l]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
   }
@@ -382,7 +382,7 @@
     ['totals', '📈 Over/Unders', x => x.type === 'line' && x.market === 'totals' && !x.alt],
     ['sides', '📏 Spreads & ML', x => x.type === 'line' && x.market !== 'totals' && !x.alt],
     ['alts', '🔀 Alt lines', x => x.alt && x.type === 'line'],
-    ['ladders', '🪜 Alt props', x => x.alt && x.type === 'prop'],
+    ['ladders', '🪜 Alt lines & TDs', x => x.alt && x.type === 'prop'],
     ['props', '🎯 Prop picks', x => x.type === 'prop' && !x.alt],
     ['players', '🧍 Player picks', x => x.type === 'prop'],
   ];
@@ -528,15 +528,28 @@
     return toggle + legendHTML(est)
       + sportSections(list, gs => `<div class="ggrid">${gs.map(card1).join('')}</div>`);
   }
+  const altProps = () => allPlayerProps().filter(x => x.alt || x.kalshi || x.market === 'player_anytime_td');
+  function viewAlts() {
+    const items = filtered(altProps());
+    const plus = items.filter(x => x.dec && x.ev >= 0.01 && !isSus(x));
+    return `<div class="sec"><h2>🪜 Alt Lines</h2><span>${items.length} lines · ${new Set(items.map(x => x.player)).size} players · 30+ / 40+ / 50+ yards, anytime TD, 20+ points and more</span></div>
+      <div class="howto">Every rung of every player's ladder with its <b>fair odds</b>, how often he's cleared it lately, and your <b>bet365 target</b>. <b>Green edge</b> = a sportsbook is paying more than fair right now${plus.length ? ` (<b>${plus.length}</b> on the board)` : ''}. Pick a sport and a stat up top to narrow it down.</div>
+      ${playersGrid(items)}`;
+  }
   function viewBoard() {
     const all = filtered([...card.lines, ...card.props]).filter(x => !isSus(x));
     const gameLines = filtered((card.board || []).filter(x => x.type === 'line' && (!x.alt || x.market === 'team_totals')).map(x => byId[x.id] || x));
-    const counts = Object.fromEntries(SECTIONS.map(([k, , fn]) => [k, k === 'games' ? new Set(gameLines.map(x => x.eventId)).size : k === 'players' ? new Set((S.allPlayers ? filtered(allPlayerProps()) : all.filter(fn)).map(x => x.player)).size : all.filter(fn).length]));
+    const altCount = new Set(filtered(allPlayerProps().filter(x => x.alt || x.kalshi || x.market === 'player_anytime_td')).map(x => x.player)).size;
+    const counts = Object.fromEntries(SECTIONS.map(([k, , fn]) => [k, k === 'ladders' ? altCount : k === 'games' ? new Set(gameLines.map(x => x.eventId)).size : k === 'players' ? new Set((S.allPlayers ? filtered(allPlayerProps()) : all.filter(fn)).map(x => x.player)).size : all.filter(fn).length]));
     const [key, , fn] = SECTIONS.find(s2 => s2[0] === S.section) || SECTIONS[3];
     const items = sortItems(all.filter(fn));
     let body;
     if (key === 'games') {
       body = gamesBoard(gameLines);
+    } else if (key === 'ladders') {
+      // every alt line / ladder rung (Kalshi + sportsbook ladders) and anytime TDs, one card per player
+      const alts = filtered(allPlayerProps().filter(x => x.alt || x.kalshi || x.market === 'player_anytime_td'));
+      body = `<p class="note" style="margin-top:-4px">Alt lines for every player: 30+, 40+, 50+ yards, anytime TD and more. Fair odds + hit rates on each rung; green edge = a sportsbook is paying more than fair right now.</p>` + playersGrid(alts);
     } else if (key === 'players') {
       body = playerToggle() + playersGrid(S.allPlayers ? filtered(allPlayerProps()) : items);
     } else {
@@ -661,8 +674,8 @@
         <p>The daily GitHub Action writes <code>data/latest.js</code>. Or open ⚙️ Settings, paste your Odds API key and hit ↻ Live refresh.</p>`);
       return;
     }
-    const v = { top: viewTop, board: viewBoard, live: viewLive, money: viewMoney, record: viewRecord, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
-    renderFilters(S.tab === 'board' ? [...card.lines, ...card.props] : S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' || S.tab === 'live' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? (S.allPlayers ? allPlayerProps() : card.props) : S.tab === 'lines' ? (card.board || []).filter(x => x.type === 'line' && !x.alt) : [...card.lines, ...card.props], { markets: S.tab === 'props', sheet: S.tab === 'sheet' });
+    const v = { top: viewTop, alts: viewAlts, board: viewBoard, live: viewLive, money: viewMoney, record: viewRecord, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
+    renderFilters(S.tab === 'board' ? [...card.lines, ...card.props] : S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' || S.tab === 'live' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? (S.allPlayers ? allPlayerProps() : card.props) : S.tab === 'alts' ? altProps() : S.tab === 'lines' ? (card.board || []).filter(x => x.type === 'line' && !x.alt) : [...card.lines, ...card.props], { markets: S.tab === 'props' || S.tab === 'alts', sheet: S.tab === 'sheet' });
     $('view').innerHTML = v();
   }
 

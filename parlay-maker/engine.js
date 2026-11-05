@@ -6,7 +6,7 @@
   // ---------------- config ----------------
   const SPORTS = {
     americanfootball_nfl: { lg: 'NFL', emoji: '🏈', espn: 'football/nfl', kind: 'fb', lines: 'h2h,spreads,totals', pri: 1,
-      props: ['player_pass_yds', 'player_rush_yds', 'player_reception_yds', 'player_receptions'] },
+      props: ['player_reception_yds', 'player_rush_yds', 'player_anytime_td', 'player_pass_yds', 'player_receptions'] },
     basketball_nba: { lg: 'NBA', emoji: '🏀', espn: 'basketball/nba', kind: 'bb', lines: 'h2h,spreads,totals', pri: 1,
       props: ['player_points', 'player_rebounds', 'player_assists', 'player_threes', 'player_points_rebounds_assists'] },
     icehockey_nhl: { lg: 'NHL', emoji: '🏒', espn: 'hockey/nhl', kind: 'hk', lines: 'h2h,spreads,totals', pri: 2,
@@ -139,10 +139,14 @@
     const S = SPORTS[sport] || {}, out = [];
     const groups = {}; // market|player|point -> {book: {Over, Under, title}}
     for (const b of ev.bookmakers || []) for (const m of b.markets || []) for (const o of m.outcomes || []) {
-      if (o.point == null || !o.description || !/^(over|under)$/i.test(o.name) || m.key.endsWith('_alternate')) continue;
-      const k = `${m.key}|${o.description}|${o.point}`;
+      if (!o.description || m.key.endsWith('_alternate')) continue;
+      // Yes/No props (anytime TD) are Over/Under 0.5 in disguise
+      const yn = /^(yes|no)$/i.test(o.name) && o.point == null && m.key === 'player_anytime_td';
+      if (!yn && (o.point == null || !/^(over|under)$/i.test(o.name))) continue;
+      const point = yn ? 0.5 : o.point, side = yn ? (/^yes$/i.test(o.name) ? 'over' : 'under') : o.name.toLowerCase();
+      const k = `${m.key}|${o.description}|${point}`;
       const g = groups[k] ||= {};
-      (g[b.key] ||= { title: b.title })[o.name.toLowerCase()] = toDec(o.price);
+      (g[b.key] ||= { title: b.title })[side] = toDec(o.price);
     }
     for (const [k, books] of Object.entries(groups)) {
       const [market, player, point] = k.split('|');
@@ -158,7 +162,8 @@
         const Side = side === 'over' ? 'Over' : 'Under';
         out.push({ type: 'prop', id: `${ev.id}|${k}|${side}`, eventId: ev.id, sport, lg: S.lg || sport, emoji: S.emoji || '🎲',
           game: `${ev.away_team} @ ${ev.home_team}`, home: ev.home_team, away: ev.away_team, start: ev.commence_time,
-          player, market, point: +point, side: Side, statLabel: label, pick: `${player} ${Side} ${point} ${label}`,
+          player, market, point: +point, side: Side, statLabel: label,
+          pick: market === 'player_anytime_td' ? (Side === 'Over' ? `${player} anytime TD` : `${player} no TD`) : `${player} ${Side} ${point} ${label}`,
           prices, fairP, src, nBooks: pairs.length });
       }
     }
