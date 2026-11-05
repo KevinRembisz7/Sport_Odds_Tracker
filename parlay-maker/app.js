@@ -112,7 +112,7 @@
   }
 
   // ---------- views ----------
-  const TABS = [['top', '🔥 Top Picks'], ['money', '💰 Money Builder'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['record', '📈 Record'], ['how', '📘 How it works']];
+  const TABS = [['top', '🔥 Top Picks'], ['live', '🔴 Live'], ['money', '💰 Money Builder'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['record', '📈 Record'], ['how', '📘 How it works']];
   function renderTabs() {
     $('tabs').innerHTML = TABS.map(([k, l]) => [k, k === 'sheet' && B365() ? '📋 bet365 Sheet' : l]).map(([k, l]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
   }
@@ -144,7 +144,7 @@
     const best = sortItems(filtered(all).filter(x => (x.vibe?.score || 0) >= 0)).sort((a, b) =>
       (b.ev + (b.vibe?.score || 0) * 0.012) - (a.ev + (a.vibe?.score || 0) * 0.012)).slice(0, 12);
     const fades = filtered(all).filter(x => x.vibe?.score <= -2).sort((a, b) => b.ev - a.ev).slice(0, 3);
-    return `${heroHTML()}${recordStrip()}
+    return `${liveBanner()}${heroHTML()}${recordStrip()}
       <div class="sec"><h2>Best bets on the board</h2><span>edge + matchup backing, sus lines removed</span></div>
       ${best.length ? `<div class="grid">${best.map((x, i) => pickCard_(x, i < 3)).join('')}</div>` : empty('No +EV picks match these filters.')}
       ${card.parlays?.length ? `<div class="sec"><h2>Today's parlays</h2><span>auto-built, one leg per game</span></div><div class="pgrid">${card.parlays.map((p, i) => parlayCard(p, i === 1)).join('')}</div>` : ''}
@@ -243,6 +243,94 @@
         <div class="grid">${singles.map(x => pickCard_(x)).join('')}</div>` : ''}
       ${bestP ? `<div class="sec"><h2>🪜 Double-up ladder</h2><span>what letting it ride really looks like with today's best doubler (${pct(bestP, 0)} to hit, ${best ? toAm(best.dec) : ''} per step)</span></div>
         <div class="parlay">${ladderHTML(bestP, best.dec)}<p class="note">Each step doubles the pot, but the odds shrink fast. Most people do better banking the win and restarting at $10 than letting it ride.</p></div>` : ''}`;
+  }
+  // ---------- live tracker (ESPN live scores/box scores — zero Odds API credits) ----------
+  const LIVE = {};
+  let liveAt = 0, liveBusy = false;
+  function trackedGroups() {
+    const g = [];
+    const slip = slipLegs();
+    if (slip.length) g.push({ name: slip.length > 1 ? '🧾 Your slip' : '🧾 Your bet', legs: slip });
+    if (card?.potd && byId[card.potd]) g.push({ name: '⭐ Pick of the Day', legs: [byId[card.potd]] });
+    if (card?.potdParlay) g.push({ name: '🎯 Parlay of the Day', legs: card.potdParlay.legs.map(id => byId[id]).filter(Boolean) });
+    return g;
+  }
+  async function refreshLive(force) {
+    if (liveBusy || !card) return;
+    const legs = [...new Map(trackedGroups().flatMap(g => g.legs).map(l => [l.id, l])).values()];
+    if (!legs.length) return;
+    const anyIn = legs.some(l => LIVE[l.id]?.state === 'in'), soon = legs.some(l => Math.abs(new Date(l.start) - Date.now()) < 5 * 36e5);
+    if (!force && liveAt && !anyIn && !(S.tab === 'live' && soon)) return;
+    liveBusy = true;
+    const cache = {}, getJSON = url => cache[url] ||= fetch(url, { cache: 'no-store' }).then(r => r.json()).catch(() => null);
+    await Promise.all(legs.map(async l => { try { LIVE[l.id] = await E.liveStatus(l, getJSON); } catch (e) {} }));
+    liveAt = Date.now(); liveBusy = false;
+    if (S.tab === 'live' || S.tab === 'top') {
+      const y = window.scrollY; render(); window.scrollTo(0, y);
+    }
+  }
+  setInterval(() => { if (!document.hidden) refreshLive(); }, 45000);
+  setInterval(() => { const el = document.getElementById('liveAgo'); if (el && liveAt) el.textContent = Math.round((Date.now() - liveAt) / 1000) + 's ago'; }, 1000);
+
+  function legChip(L) {
+    if (!L) return '<span class="lchip">…</span>';
+    if (L.result === 'won') return `<span class="lchip won">✅ ${L.state === 'post' ? 'Won' : 'Cashed'}</span>`;
+    if (L.result === 'lost') return `<span class="lchip lost">❌ ${L.state === 'post' ? 'Lost' : 'Busted'}</span>`;
+    if (L.result === 'push' || L.result === 'void') return `<span class="lchip">➖ ${L.result === 'void' ? 'Void' : 'Push'}</span>`;
+    if (L.state === 'pre' || L.state === 'na') return '<span class="lchip">⏳ Not started</span>';
+    if (L.winning == null) return '<span class="lchip">🏁 Early</span>';
+    return L.winning ? '<span class="lchip on">🟢 On track</span>' : '<span class="lchip behind">🟠 Behind</span>';
+  }
+  function liveBar(x, L) {
+    if (!L || L.state === 'pre' || L.state === 'na') return `<div class="note">Starts ${esc(fmtTime(x.start))}</div>`;
+    const color = L.result === 'won' ? 'var(--edge)' : L.result === 'lost' ? 'var(--bad)' : L.winning == null ? 'var(--accent2)' : L.winning ? 'var(--edge)' : 'var(--warn)';
+    if (L.kind === 'count') {
+      if (L.value == null) return '<div class="note">Did not play</div>';
+      const max = Math.max(L.line * 1.35, L.value, L.pace || 0, 1), w = v => Math.min(100, v / max * 100);
+      const txt = L.over
+        ? (L.value > L.line ? `<b>${L.value}</b> — cleared ${L.line} ✅` : `<b>${L.value}</b> of ${Math.floor(L.line) + 1} needed · <b>${Math.floor(L.line) + 1 - L.value}</b> to go`)
+        : (L.value > L.line ? `<b>${L.value}</b> — went over ${L.line}` : `<b>${L.value}</b> · stay under ${L.line} · <b>${(L.line - L.value).toFixed(1).replace('.0', '')}</b> to spare`);
+      return `<div class="lbar"><i style="width:${w(L.value)}%;background:${color}"></i>
+          <span class="lline" style="left:${w(L.line)}%" title="line ${L.line}"></span>
+          ${L.pace && L.state === 'in' ? `<span class="lpace" style="left:${w(L.pace)}%" title="pace"></span>` : ''}</div>
+        <div class="lrow"><span>${txt}</span>${L.pace && L.state === 'in' ? `<span class="muted">on pace for <b>${L.pace.toFixed(1)}</b></span>` : ''}</div>`;
+    }
+    const scale = { bb: 15, fb: 14, hk: 2.5 }[E.SPORTS[x.sport]?.kind] || 5;
+    const pos = Math.max(3, Math.min(97, 50 + L.cover / scale * 50));
+    const label = x.market === 'h2h'
+      ? (L.margin > 0 ? `Up <b>${L.margin}</b>` : L.margin < 0 ? `Down <b>${-L.margin}</b>` : 'Tied')
+      : (L.cover > 0 ? `Covering by <b>${L.cover}</b>` : L.cover < 0 ? `Needs <b>${-L.cover}</b> more to cover` : 'Right on the number');
+    return `<div class="lbar mid"><span class="lline" style="left:50%"></span><span class="ldot" style="left:${pos}%;background:${color}"></span></div>
+      <div class="lrow"><span>${label}</span></div>`;
+  }
+  function liveGroup(g) {
+    const Ls = g.legs.map(l => LIVE[l.id]);
+    const lost = Ls.some(L => L?.result === 'lost'), allWon = Ls.length && Ls.every(L => L?.result === 'won' || L?.result === 'push' || L?.result === 'void');
+    const on = Ls.filter(L => L && (L.result === 'won' || (L.state === 'in' && L.winning))).length;
+    const head = g.legs.length > 1
+      ? (lost ? '<span class="lchip lost">❌ Busted</span>' : allWon ? '<span class="lchip won">✅ CASHED</span>' : `<span class="lchip ${on === g.legs.length ? 'on' : ''}">${on}/${g.legs.length} on track</span>`)
+      : legChip(Ls[0]);
+    const s2 = E.parlayStats(g.legs, S.kfrac);
+    return `<div class="parlay livecard"><h3>${g.name} <span class="odds">${toAm(s2.dec)}</span></h3><div>${head}</div>
+      ${g.legs.map(x => { const L = LIVE[x.id], t = titleOf(x); return `<div class="lleg" data-open="${esc(x.id)}">
+        <div class="lhead">${avatar(x)}<div class="t"><b>${esc(t.n)}</b><span class="muted">${esc(t.p)} · ${toAm(x.dec)}</span></div>${legChip(L)}</div>
+        ${L && L.state !== 'pre' && L.state !== 'na' ? `<div class="note">${L.state === 'in' ? '<span class="dotlive"></span>' : ''}${esc(L.detail)} · ${esc(L.score)}</div>` : ''}
+        ${liveBar(x, L)}</div>`; }).join('')}
+    </div>`;
+  }
+  function viewLive() {
+    const groups = trackedGroups();
+    if (!liveAt) refreshLive(true);
+    return `<div class="sec"><h2>🔴 Live tracker</h2><span>updated <b id="liveAgo">${liveAt ? Math.round((Date.now() - liveAt) / 1000) + 's ago' : 'now'}</b> · refreshes every 45s during games · <b>0 API credits</b> (ESPN live data)</span>
+        <span class="spacer"></span><button class="btn small" id="liveNow">↻ Update now</button></div>
+      <div class="howto">📍 Tracks your slip, the Pick of the Day and the Parlay of the Day. Add any bet to your slip with <b>+ Slip</b> to follow it here. The dashed line is the betting line; the thin marker is where the player is <b>on pace</b> to finish.</div>
+      ${groups.length ? `<div class="pgrid">${groups.map(liveGroup).join('')}</div>` : empty('Nothing to track yet. Add bets to your slip.')}`;
+  }
+  function liveBanner() {
+    const legs = trackedGroups().flatMap(g => g.legs), Ls = legs.map(l => LIVE[l.id]).filter(L => L?.state === 'in');
+    if (!Ls.length) return '';
+    const on = Ls.filter(L => L.winning || L.result === 'won').length;
+    return `<div class="livebanner" data-tab="live"><span class="dotlive"></span><b>LIVE</b> · ${Ls.length} leg${Ls.length > 1 ? 's' : ''} in play · <b>${on}</b> on track <span class="spacer"></span> Open tracker →</div>`;
   }
   function viewProps() {
     const items = sortItems(filtered(card.props));
@@ -354,8 +442,8 @@
         <p>The daily GitHub Action writes <code>data/latest.js</code>. Or open ⚙️ Settings, paste your Odds API key and hit ↻ Live refresh.</p>`);
       return;
     }
-    const v = { top: viewTop, money: viewMoney, record: viewRecord, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
-    renderFilters(S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? card.props : S.tab === 'lines' ? card.lines : [...card.lines, ...card.props], { markets: S.tab === 'props', sheet: S.tab === 'sheet' });
+    const v = { top: viewTop, live: viewLive, money: viewMoney, record: viewRecord, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
+    renderFilters(S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' || S.tab === 'live' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? card.props : S.tab === 'lines' ? card.lines : [...card.lines, ...card.props], { markets: S.tab === 'props', sheet: S.tab === 'sheet' });
     $('view').innerHTML = v();
   }
 
@@ -473,6 +561,7 @@
   document.addEventListener('click', e => {
     if (e.target.closest('input.pin')) return;
     if (e.target.id === 'moreBtn') { S.shown += 150; render(); return; }
+    if (e.target.id === 'liveNow') { refreshLive(true); return; }
     const el = e.target.closest('[data-add],[data-open],[data-tab],[data-lg],[data-mk],[data-close],[data-loadparlay],#overlay,#slipbar,#liveBtn,#setBtn,#saveSet,#dropLive,#clearSlip,#buildBtn');
     if (!el) return;
     if (el.dataset.add) { e.stopPropagation(); toggleSlip(el.dataset.add); return; }
@@ -515,5 +604,5 @@
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
 
-  applyTheme(); index(); render();
+  applyTheme(); index(); render(); refreshLive(true);
 })();

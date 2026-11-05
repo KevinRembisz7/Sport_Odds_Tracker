@@ -141,6 +141,22 @@
   @media (max-width: 640px) { .ladder { grid-template-columns: 1fr; } }
   .rung { background: var(--panel2); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
   .rung .amt { font-size: 22px; font-weight: 900; color: var(--edge); }
+  .livecard { gap: 12px; }
+  .lleg { background: var(--panel2); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 6px; cursor: pointer; }
+  .lhead { display: flex; align-items: center; gap: 10px; }
+  .lhead .avatar { width: 38px; height: 38px; border-radius: 10px; font-size: 16px; }
+  .lhead .t { flex: 1; min-width: 0; font-size: 13px; } .lhead .t b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lchip { font-size: 11.5px; font-weight: 800; border-radius: 999px; padding: 3px 9px; background: var(--chip); white-space: nowrap; display: inline-block; }
+  .lchip.won, .lchip.on { background: var(--edgebg); color: var(--edge); } .lchip.lost { background: var(--badbg); color: var(--bad); } .lchip.behind { background: var(--warnbg); color: var(--warn); }
+  .lbar { position: relative; height: 12px; border-radius: 99px; background: var(--chip); overflow: visible; }
+  .lbar > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px; transition: width .6s ease; }
+  .lline { position: absolute; top: -4px; bottom: -4px; width: 0; border-left: 2px dashed var(--ink); opacity: .7; }
+  .lpace { position: absolute; top: -3px; bottom: -3px; width: 3px; margin-left: -1px; border-radius: 2px; background: var(--accent2); }
+  .ldot { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; border: 2px solid var(--panel); transition: left .6s ease; }
+  .lrow { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; flex-wrap: wrap; }
+  .dotlive { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); margin-right: 6px; animation: pulse 1.4s infinite; vertical-align: middle; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+  .livebanner { display: flex; align-items: center; gap: 6px; background: var(--badbg); border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent); border-radius: 12px; padding: 10px 14px; margin: 4px 0 12px; cursor: pointer; font-size: 14px; }
   .howto { background: var(--edgebg); border-radius: 12px; padding: 10px 14px; font-size: 13.5px; margin-bottom: 12px; }
 
   /* section heads */

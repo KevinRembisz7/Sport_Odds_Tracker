@@ -586,6 +586,53 @@
     const r = cmp(v, leg.point);
     return { result: leg.side === 'Over' ? r : r === 'won' ? 'lost' : r === 'lost' ? 'won' : r, actual: `${v} ${PROP_STATS[leg.market]?.label || ''}`.trim() };
   }
+  // ---------------- live tracking (ESPN only — costs zero Odds API credits) ----------------
+  const GAME_LEN = { fb: [4, 900], bb: [4, 720], hk: [3, 1200] }; // periods, seconds per period
+  async function liveStatus(leg, getJSON) {
+    const S = SPORTS[leg.sport];
+    if (!S?.espn || !leg.start) return { state: 'na' };
+    const base = `https://site.api.espn.com/apis/site/v2/sports/${S.espn}`;
+    const sb = await getJSON(`${base}/scoreboard?dates=${etDate(leg.start)}${S.q || ''}`);
+    let ev = null;
+    for (const e of sb?.events || []) {
+      const cs = e.competitions[0].competitors, h = cs.find(c => c.homeAway === 'home'), a = cs.find(c => c.homeAway === 'away');
+      if (h && a && teamMatches(h.team, leg.home) && teamMatches(a.team, leg.away)) { ev = { e, h, a }; break; }
+    }
+    if (!ev) return { state: 'pre', detail: '' };
+    const comp = ev.e.competitions[0], st = comp.status || {}, state = st.type?.state || 'pre';
+    let [per, len] = GAME_LEN[S.kind] || [0, 0];
+    if (leg.sport === 'basketball_ncaab') { per = 2; len = 1200; }
+    let frac = state === 'post' ? 1 : state === 'pre' ? 0 : per ? Math.min(1, ((st.period - 1) * len + (len - (st.clock || 0))) / (per * len)) : null;
+    if (state === 'in' && st.period > per) frac = 1;
+    const hs = +ev.h.score || 0, as = +ev.a.score || 0;
+    const out = { state, detail: st.type?.shortDetail || '', frac, score: `${ev.a.team.abbreviation} ${as} – ${ev.h.team.abbreviation} ${hs}` };
+    if (state === 'pre') return out;
+    if (leg.type === 'line') {
+      if (leg.market === 'totals') Object.assign(out, { kind: 'count', value: hs + as, line: leg.point, over: /^over/i.test(leg.pick) });
+      else {
+        const isHome = norm(leg.team) === norm(leg.home), mine = isHome ? hs : as, theirs = isHome ? as : hs;
+        Object.assign(out, { kind: 'margin', margin: mine - theirs, cover: mine - theirs + (leg.market === 'spreads' ? leg.point : 0), draw: leg.team === 'Draw' });
+        if (out.draw) out.cover = hs === as ? 0.5 : -Math.abs(hs - as);
+      }
+    } else {
+      const row = boxRows(await getJSON(`${base}/summary?event=${ev.e.id}`))[normName(leg.player)];
+      const v = row && !row._dnp ? statVal(row, leg.market) : (state === 'post' ? null : 0);
+      Object.assign(out, { kind: 'count', value: v, line: leg.point, over: leg.side === 'Over', dnp: state === 'post' && (!row || row._dnp) });
+    }
+    if (out.kind === 'count' && out.value != null && frac > 0.15 && frac < 1) out.pace = out.value / frac;
+    if (state === 'post') {
+      if (out.dnp) out.result = 'void';
+      else if (out.kind === 'count') { const r = out.value > out.line ? 'won' : out.value < out.line ? 'lost' : 'push'; out.result = out.over ? r : r === 'won' ? 'lost' : r === 'lost' ? 'won' : r; }
+      else out.result = out.cover > 0 ? 'won' : out.cover < 0 ? 'lost' : 'push';
+    } else if (out.kind === 'count') {
+      // Overs can cash early; unders can bust early
+      if (out.over && out.value > out.line) out.result = 'won';
+      if (!out.over && out.value > out.line) out.result = 'lost';
+      // too early to judge until ~15% of the game is played (no pace yet)
+      out.winning = out.pace == null && frac < 0.15 ? null : out.over ? (out.pace ?? out.value) > out.line : (out.pace ?? out.value) < out.line;
+    } else out.winning = out.cover > 0;
+    return out;
+  }
   function parlayResult(legs) {
     const rs = legs.map(l => l.result || 'pending');
     if (rs.includes('lost')) return 'lost';
@@ -627,7 +674,7 @@
   const Engine = { SPORTS, PROP_STATS, STALE, PROP_STALE, toDec, toAm, pct, esc, devig, norm, normName,
     legsFromEvents, propsFromEvent, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
     parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
-    pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult };
+    pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult, liveStatus };
   root.Engine = Engine;
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
