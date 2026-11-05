@@ -14,7 +14,7 @@
     tab: store.get('tab', 'top'), lg: 'ALL', market: 'ALL', q: '', sort: 'ev',
     slip: store.get('slip', []), bankroll: store.get('bankroll', 500), kfrac: store.get('kfrac', 0.25),
     key: store.get('key', ''), budget: store.get('budget2', 8), allBooks: store.get('allBooks', false),
-    myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), prices: store.get('prices', {}), type: 'ALL', shown: 120,
+    myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), allPlayers: store.get('allPlayers', false), prices: store.get('prices', {}), type: 'ALL', shown: 120,
   };
   const B365 = () => S.myBook === 'bet365';
   const EDGE_BUFFER = 0.02; // target price = break-even + 2% EV
@@ -56,6 +56,7 @@
   const fmtTime = iso => iso ? new Date(iso).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
   const signPct = x => (x >= 0 ? '+' : '') + (x * 100).toFixed(1) + '%';
   const vibeCls = v => !v ? 'v-n' : v.score >= 2 ? 'v-g' : v.score <= -2 ? 'v-b' : 'v-n';
+  const VIBE_HELP = 'Vibe = matchup score. +1 for each thing backing this bet (injuries, recent hit rate, ESPN model, form, scoring projection), −1 for each thing against it. 🟢 +2 or better · 🟡 mixed · 🔴 −2 or worse.';
   const vibeTxt = v => !v ? '—' : (v.score >= 2 ? '🟢 ' : v.score <= -2 ? '🔴 ' : '🟡 ') + (v.score > 0 ? '+' : '') + v.score;
   const isSus = x => x.ev >= (x.type === 'prop' ? E.PROP_STALE : E.STALE);
   const gameOf = x => card.games?.[x.eventId];
@@ -95,7 +96,7 @@
     const hit = x.vibe?.hit;
     return `<article class="card ${hot ? 'hot' : ''}" data-open="${esc(x.id)}">
       <div class="c-top"><span class="tag">${x.emoji} ${esc(x.lg)}</span><span>${esc(fmtTime(x.start))}</span>
-        <span class="spacer"></span><span class="vibe ${vibeCls(v)}" title="Matchup vibe">${vibeTxt(v)}</span></div>
+        <span class="spacer"></span><span class="vibe ${vibeCls(v)}" title="${VIBE_HELP}">${vibeTxt(v)}</span></div>
       <div class="c-main">${avatar(x)}
         <div class="c-title"><div class="n">${esc(t.n)}</div><div class="p">${esc(t.p)}</div><div class="g">${esc(t.g)}</div></div>
         <div class="price"><b>${toAm(x.dec)}</b><small>${esc(x.book)}</small></div></div>
@@ -354,29 +355,40 @@
       .map(lg => `<div class="sec sub"><h2>${by[lg][0].emoji} ${esc(lg)}</h2><span>${by[lg].length}</span></div>${renderList(by[lg])}`).join('');
   }
   function playerCard(name, ps) {
-    ps = [...ps].sort((a, b) => (b.ev + (b.vibe?.score || 0) * 0.01) - (a.ev + (a.vibe?.score || 0) * 0.01));
+    const sc = x => x.dec ? (x.ev ?? -1) + (x.vibe?.score || 0) * 0.01 : -2 + x.fairP * 0.01;
+    ps = [...ps].sort((a, b) => sc(b) - sc(a));
     const top = ps[0], t = titleOf(top);
     return `<article class="card player">
-      <div class="c-top"><span class="tag">${top.emoji} ${esc(top.lg)}</span><span>${esc(fmtTime(top.start))}</span><span class="spacer"></span><span class="tag">${ps.length} play${ps.length > 1 ? 's' : ''}</span></div>
+      <div class="c-top"><span class="tag">${top.emoji} ${esc(top.lg)}</span><span>${esc(fmtTime(top.start))}</span><span class="spacer"></span><span class="tag">${ps.length} ${S.allPlayers ? 'line' : 'play'}${ps.length > 1 ? 's' : ''}</span></div>
       <div class="c-main">${avatar(top)}<div class="c-title"><div class="n">${esc(name)}</div><div class="g">${esc(t.g)}</div></div></div>
       ${ps.map((x, i) => `<div class="prow ${i === 0 ? 'best' : ''}" data-open="${esc(x.id)}">
         <div class="t"><b>${i === 0 ? '⭐ ' : ''}${esc(propLabel(x))}</b>
-          <span class="muted">${toAm(x.dec)} ${esc(x.book)}${x.vibe?.hit ? ` · hit ${x.vibe.hit.hits}/${x.vibe.hit.n}` : ''}${B365() ? ` · bet365 ≥ ${targetAm(x)}` : ''}</span></div>
-        <span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)}</span>
-        <button class="add ${S.slip.includes(x.id) ? 'in' : ''}" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓' : '+'}</button></div>`).join('')}
+          <span class="muted">${x.dec ? `${toAm(x.dec)} ${esc(x.book)}` : `fair ${toAm(1 / x.fairP)} · ${pct(x.fairP, 0)}`}${x.vibe?.hit ? ` · hit ${x.vibe.hit.hits}/${x.vibe.hit.n}` : ''}${B365() ? ` · bet365 ≥ ${targetAm(x)}` : ''}</span></div>
+        ${x.dec && x.ev != null ? `<span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)}</span>` : '<span class="muted">—</span>'}
+        ${x.dec ? `<button class="add ${S.slip.includes(x.id) ? 'in' : ''}" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓' : '+'}</button>` : ''}</div>`).join('')}
     </article>`;
+  }
+  const allPlayerProps = () => (card.board || []).filter(x => x.type === 'prop').map(x => byId[x.id] || x)
+    .concat(card.props.filter(p => !(card.board || []).some(b => b.id === p.id)));
+  const playerToggle = () => `<div class="seg small"><button class="${S.allPlayers ? '' : 'on'}" data-allp="0">⭐ +EV only</button><button class="${S.allPlayers ? 'on' : ''}" data-allp="1">🧍 Every player (fair odds)</button></div>`;
+  function playersGrid(items) {
+    const groups = {};
+    for (const x of items) (groups[x.player] ||= []).push(x);
+    const best = ps => Math.max(...ps.map(x => x.dec ? (x.ev ?? -1) : -2));
+    const list = Object.entries(groups).sort((a, b) => S.sort === 'sport' ? lgRank(a[1][0]) - lgRank(b[1][0]) || best(b[1]) - best(a[1]) : best(b[1]) - best(a[1]));
+    const shown = list.slice(0, S.shown);
+    return list.length ? `<div class="grid">${shown.map(([n, ps]) => playerCard(n, ps)).join('')}</div>`
+      + (list.length > shown.length ? `<div style="text-align:center;margin-top:12px"><button class="btn" id="moreBtn">Show more players (${list.length - shown.length} left)</button></div>` : '')
+      : empty('No players match these filters.');
   }
   function viewBoard() {
     const all = filtered([...card.lines, ...card.props]).filter(x => !isSus(x));
-    const counts = Object.fromEntries(SECTIONS.map(([k, , fn]) => [k, k === 'players' ? new Set(all.filter(fn).map(x => x.player)).size : all.filter(fn).length]));
+    const counts = Object.fromEntries(SECTIONS.map(([k, , fn]) => [k, k === 'players' ? new Set((S.allPlayers ? filtered(allPlayerProps()) : all.filter(fn)).map(x => x.player)).size : all.filter(fn).length]));
     const [key, , fn] = SECTIONS.find(s2 => s2[0] === S.section) || SECTIONS[3];
     const items = sortItems(all.filter(fn));
     let body;
     if (key === 'players') {
-      const groups = {};
-      for (const x of items) (groups[x.player] ||= []).push(x);
-      const list = Object.entries(groups).sort((a, b) => S.sort === 'sport' ? lgRank(a[1][0]) - lgRank(b[1][0]) : Math.max(...b[1].map(x => x.ev)) - Math.max(...a[1].map(x => x.ev)));
-      body = list.length ? `<div class="grid">${list.map(([n, ps]) => playerCard(n, ps)).join('')}</div>` : empty('No player picks match these filters.');
+      body = playerToggle() + playersGrid(S.allPlayers ? filtered(allPlayerProps()) : items);
     } else {
       body = items.length ? sportSections(items, xs => `<div class="grid">${xs.map(x => pickCard_(x)).join('')}</div>`)
         : empty(key === 'ladders' ? 'No +EV alt props (ladders like 10+ PTS / 3+ AST) on today\u2019s card. Ladders get pulled for the games we already have props for, when the day\u2019s budget has room, and model-priced rungs need a 5% edge to show.' : key === 'alts' ? 'No +EV alt lines on today’s card. Alt lines cost 2 credits per game, so they only get pulled when the day’s budget has room (mostly weekends on the free plan), and most come out priced fair.' : 'Nothing +EV in this section with these filters.');
@@ -386,8 +398,10 @@
       ${body}`;
   }
   function viewProps() {
+    if (S.allPlayers) return `<div class="sec"><h2>Player props</h2><span>every priced prop, every sport · fair odds${B365() ? ' + bet365 targets' : ''}</span></div>${playerToggle()}${playersGrid(filtered(allPlayerProps()))}`;
     const items = sortItems(filtered(card.props));
     return `<div class="sec"><h2>Player props</h2><span>${card.props.length} +EV prop sides · bars = last games vs the line</span></div>
+      ${playerToggle()}
       ${items.length ? `<div class="grid">${items.map(x => pickCard_(x)).join('')}</div>`
         : empty(card.props.length ? 'No props match these filters.' : 'No props on today\'s card — props only get pulled for games starting within ~30h, and only if the daily credit budget allows.')}`;
   }
@@ -496,7 +510,7 @@
       return;
     }
     const v = { top: viewTop, board: viewBoard, live: viewLive, money: viewMoney, record: viewRecord, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
-    renderFilters(S.tab === 'board' ? [...card.lines, ...card.props] : S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' || S.tab === 'live' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? card.props : S.tab === 'lines' ? card.lines : [...card.lines, ...card.props], { markets: S.tab === 'props', sheet: S.tab === 'sheet' });
+    renderFilters(S.tab === 'board' ? [...card.lines, ...card.props] : S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' || S.tab === 'live' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? (S.allPlayers ? allPlayerProps() : card.props) : S.tab === 'lines' ? card.lines : [...card.lines, ...card.props], { markets: S.tab === 'props', sheet: S.tab === 'sheet' });
     $('view').innerHTML = v();
   }
 
@@ -616,13 +630,14 @@
     if (e.target.closest('input.pin')) return;
     if (e.target.id === 'moreBtn') { S.shown += 150; render(); return; }
     if (e.target.id === 'liveNow') { refreshLive(true); return; }
-    const el = e.target.closest('[data-add],[data-open],[data-tab],[data-section],[data-lg],[data-mk],[data-close],[data-loadparlay],#overlay,#slipbar,#liveBtn,#setBtn,#saveSet,#dropLive,#clearSlip,#buildBtn');
+    const el = e.target.closest('[data-add],[data-open],[data-tab],[data-section],[data-allp],[data-lg],[data-mk],[data-close],[data-loadparlay],#overlay,#slipbar,#liveBtn,#setBtn,#saveSet,#dropLive,#clearSlip,#buildBtn');
     if (!el) return;
     if (el.dataset.add) { e.stopPropagation(); toggleSlip(el.dataset.add); return; }
     if (el.dataset.open) { openDetail(el.dataset.open); return; }
     if (el.dataset.tab) { e.preventDefault(); window.scrollTo({ top: 0 }); S.tab = el.dataset.tab; store.set('tab', S.tab); S.market = 'ALL'; render(); return; }
     if (el.dataset.lg) { S.lg = el.dataset.lg; S.market = 'ALL'; render(); return; }
     if (el.dataset.mk) { S.market = el.dataset.mk; render(); return; }
+    if (el.dataset.allp) { S.allPlayers = el.dataset.allp === '1'; store.set('allPlayers', S.allPlayers); S.shown = 120; render(); return; }
     if (el.dataset.section) { S.section = el.dataset.section; store.set('section', S.section); render(); return; }
     if (el.dataset.loadparlay) { S.slip = el.dataset.loadparlay.split(','); store.set('slip', S.slip); render(); openSlip(); return; }
     if (el.hasAttribute('data-close') || el.id === 'overlay') { closeAll(); return; }
