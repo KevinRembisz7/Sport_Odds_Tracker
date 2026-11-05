@@ -12,6 +12,9 @@ on:
       budget:
         description: 'Odds API credits to spend (blank = auto: credits left / days left in month)'
         required: false
+      force:
+        description: 'Type yes to rebuild with fresh odds even if today''s card exists (spends credits)'
+        required: false
   push:
     branches: [main]
     paths: ['parlay-maker/**', '.github/workflows/daily-card.yml']
@@ -42,7 +45,9 @@ jobs:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}   # optional, free at api-football.com
           DAILY_BUDGET: ${{ inputs.budget || vars.DAILY_BUDGET || 'auto' }}
-          FRESH_FLAG: ${{ github.event_name == 'schedule' && '--skip-if-fresh' || '' }}
+          # schedule + manual runs skip the paid rebuild if today's card exists (free refresh instead);
+          # set the 'force' input on a manual run to rebuild anyway
+          FRESH_FLAG: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.force != 'yes')) && '--skip-if-fresh' || '' }}
         run: |
           if [ -z "$ODDS_API_KEY" ]; then
             echo "::warning title=No ODDS_API_KEY secret::Publishing the last saved card. Add the secret under Settings → Secrets and variables → Actions to get a fresh card every day."
