@@ -533,7 +533,7 @@
     const active = new Map(sp.json.filter(s => s.active && !s.has_outrights).map(s => [s.key, s]));
     const sports = Object.keys(SPORTS).filter(k => active.has(k));
     // tennis tournaments come and go — add whatever is live
-    for (const s of active.values()) if (s.group === 'Tennis' && sports.filter(k => k.startsWith('tennis')).length < 2) {
+    for (const s of active.values()) if (s.group === 'Tennis' && !sports.includes(s.key) && sports.filter(k => k.startsWith('tennis')).length < 2) {
       SPORTS[s.key] = { lg: /wta/i.test(s.key) ? 'WTA' : 'ATP', emoji: '🎾', kind: 'other', lines: 'h2h', pri: 3, title: s.title };
       sports.push(s.key);
     }
@@ -554,18 +554,21 @@
     card.creditPlan = { left, daysLeft, reserve, perDay: +perDay.toFixed(1), today: B };
 
     // Free schedule check (the /events endpoint costs 0 credits): only buy odds for sports with games soon.
-    const soonCount = {};
+    const soonCount = {}, schedule = {};
     for (const s of sports) {
       try {
         const r = await odds(`/sports/${s}/events`); track(r.headers);
-        soonCount[s] = r.json.filter(e => { const t = new Date(e.commence_time) - now; return t > 0 && t < lineWindowH * 36e5; }).length;
-      } catch (e) { soonCount[s] = 0; }
+        schedule[s] = r.json.filter(e => { const t = new Date(e.commence_time) - now; return t > 0 && t < lineWindowH * 36e5; })
+          .sort((a, b) => a.commence_time.localeCompare(b.commence_time));
+        soonCount[s] = schedule[s].length;
+      } catch (e) { soonCount[s] = 0; schedule[s] = []; }
     }
     const withGames = sports.filter(s => soonCount[s] > 0);
     log(`games in next ${lineWindowH}h: ${withGames.map(s => SPORTS[s].lg + ' ' + soonCount[s]).join(', ') || 'none'} (skipping ${sports.length - withGames.length} sports with nothing soon)`);
 
     let lines = [];
-    const linesBudget = Math.max(Math.min(B, 6), Math.floor(B * 0.45));
+    // props are where the edge lives, so lines get ~35% (at least one sport's worth)
+    const linesBudget = Math.max(Math.min(B, 3), Math.floor(B * 0.35));
     for (const s of withGames) {
       const cost = SPORTS[s].lines.split(',').length;
       if (used + cost > linesBudget) continue;
@@ -582,17 +585,27 @@
     // props for games starting soon, soonest first, until the budget runs out
     let props = [];
     const propGames = [];
-    const soon = Object.values(events).filter(e => SPORTS[e.sport].props && new Date(e.commence_time) - now < propWindowH * 36e5)
-      .sort((a, b) => SPORTS[a.sport].pri - SPORTS[b.sport].pri || a.commence_time.localeCompare(b.commence_time));
-    for (const e of soon) {
-      // fit as many prop markets as the budget allows (most popular first), min 2
-      const mk = SPORTS[e.sport].props.slice(0, Math.max(0, B - used));
-      if (mk.length < 2) continue;
-      try {
-        const r = await odds(`/sports/${e.sport}/events/${e.id}/odds?bookmakers=${BOOKS}&markets=${mk.join(',')}&oddsFormat=american`); track(r.headers);
-        props.push(...propsFromEvent(r.json, e.sport)); propGames.push(e);
-      } catch (err) { log(`props ${e.id} failed: ${err.message}`); }
+    // Round-robin across sports (one game per sport per pass, soonest first) so the budget covers NFL, NHL and
+    // college props too instead of NBA eating it all. Uses the free schedule, so it doesn't depend on which lines we bought.
+    // Core 3 markets per game (most popular first); 2 minimum.
+    const queues = {};
+    for (const s of withGames) if (SPORTS[s].props) queues[s] = schedule[s].filter(e => new Date(e.commence_time) - now < propWindowH * 36e5).map(e => ({ ...e, sport: s }));
+    const rr = Object.keys(queues);
+    for (let fetched = true; fetched;) {
+      fetched = false;
+      for (const s of rr) {
+        const e = queues[s].shift(); if (!e) continue;
+        const mk = SPORTS[s].props.slice(0, Math.min(3, Math.max(0, B - used)));
+        if (mk.length < 2) continue;
+        try {
+          const r = await odds(`/sports/${s}/events/${e.id}/odds?bookmakers=${BOOKS}&markets=${mk.join(',')}&oddsFormat=american`); track(r.headers);
+          const got = propsFromEvent(r.json, s);
+          props.push(...got); if (got.length) propGames.push(e);
+          fetched = true;
+        } catch (err) { log(`props ${e.id} failed: ${err.message}`); }
+      }
     }
+    log(`props by sport: ${rr.map(s => SPORTS[s].lg + ' ' + new Set(props.filter(p => p.sport === s).map(p => p.eventId)).size).join(', ')}`);
     // alt player props (ladders) for games we have main lines for — the main line calibrates the model
     let ladderGames = 0;
     for (const e of propGames) {
