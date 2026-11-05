@@ -36,6 +36,7 @@ jobs:
         if: github.event_name != 'push'
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}   # optional, free at api-football.com
           DAILY_BUDGET: ${{ inputs.budget || vars.DAILY_BUDGET || 'auto' }}
         run: |
           if [ -z "$ODDS_API_KEY" ]; then

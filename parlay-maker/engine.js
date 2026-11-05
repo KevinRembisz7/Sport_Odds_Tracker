@@ -699,7 +699,7 @@
 
     card.lines = lines; card.props = props;
     card.credits = { left, used };
-    await analyzeCard(card, get, log);
+    await analyzeCard(card, get, log, { apiFootballKey: opts.apiFootballKey });
     log(`done: ${lines.length} +EV lines, ${props.length} +EV props, ${used} credits used, ${left} left`);
     return card;
   }
@@ -748,7 +748,8 @@
   }
 
   // ESPN matchup + player analysis and prebuilt parlays. Free (no odds credits), so it can be re-run on a saved card.
-  async function analyzeCard(card, get, log = () => {}) {
+  async function analyzeCard(card, get, log = () => {}, opts = {}) {
+    const af = makeApiFootball(opts.apiFootballKey, get);
     // drop anything that has already started (matters when re-running on a saved card)
     const nowD = new Date(), future = x => !x.start || new Date(x.start) > nowD;
     card.lines = card.lines.filter(future); card.props = card.props.filter(future);
@@ -765,7 +766,7 @@
       const bd = await espn.breakdown(l);
       if (bd) card.games[l.eventId] = bd;
       l.vibe = bd ? analyzeLine(l, bd, fairML) : { score: 0, items: [{ tone: 'n', text: 'No ESPN matchup data for this game — the edge is pure price.' }] };
-      const ex = await extraNotes(l, bd, { getJSON, get, fairML }).catch(() => []);
+      const ex = await extraNotes(l, bd, { getJSON, get, fairML, af }).catch(() => []);
       if (ex.length) { l.vibe.items.push(...ex); l.vibe.score = scoreOf(l.vibe.items); }
     });
     await mapLimit(props, 6, async p => {
@@ -782,7 +783,7 @@
       p.headshot = ath?.headshot || ''; p.team = side ? bd[side].abbr : '';
       if (side) p.opp = bd[side === 'home' ? 'away' : 'home'].abbr;
       p.vibe = analyzeProp(p, logs, bd, side);
-      const ex = await extraNotes(p, bd, { getJSON, get, fairML }).catch(() => []);
+      const ex = await extraNotes(p, bd, { getJSON, get, fairML, af }).catch(() => []);
       if (ex.length) { p.vibe.items.push(...ex); p.vibe.score = scoreOf(p.vibe.items); }
     });
     for (const g of Object.values(card.games)) for (const t of [g.home, g.away]) t.injuries = t.injuries.slice(0, 14);
@@ -797,7 +798,7 @@
     const potd = pickOfDay([...lines, ...props]);
     card.potd = potd ? potd.id : null;
     card.potdParlay = parlayOfDay([...lines, ...props]);
-    log(`analyzed ${Object.keys(card.games).length} games`);
+    log(`analyzed ${Object.keys(card.games).length} games${af ? ` · API-Football calls ${af.calls()}` : ''}`);
     return card;
   }
 
@@ -1003,6 +1004,78 @@
     } catch (e) { return []; }
   }
 
+  // ---------------- API-Football (free key, 100 calls/day): soccer player season stats + injuries ----------------
+  // Only runs when an API_FOOTBALL_KEY is configured. Calls are capped per run to stay inside the free daily quota.
+  const AF_LEAGUE = { soccer_epl: 39, soccer_uefa_champs_league: 2 };
+  function makeApiFootball(key, get, cap = 60) {
+    if (!key) return null;
+    let calls = 0; const cache = {};
+    const af = path => cache[path] ||= (async () => {
+      if (calls >= cap) return null;
+      calls++;
+      const r = await get(`https://v3.football.api-sports.io${path}`, { 'x-apisports-key': key });
+      return r.json?.response ?? null;
+    })().catch(() => null);
+    const season = () => { const n = new Date(); return n.getUTCMonth() >= 6 ? n.getUTCFullYear() : n.getUTCFullYear() - 1; };
+    return {
+      calls: () => calls,
+      async player(sport, name) {
+        const lg = AF_LEAGUE[sport]; if (!lg) return null;
+        const last = String(name).split(' ').slice(-1)[0];
+        if (last.length < 4) return null; // API needs 4+ chars to search
+        const res = await af(`/players?search=${encodeURIComponent(last)}&league=${lg}&season=${season()}`);
+        const hit = (res || []).find(p => normName(`${p.player?.firstname} ${p.player?.lastname}`) === normName(name) || normName(p.player?.name) === normName(name))
+          || ((res || []).length === 1 ? res[0] : null);
+        if (!hit) return null;
+        const st = (hit.statistics || []).find(z => z.league?.id === lg) || hit.statistics?.[0] || {};
+        const apps = st.games?.appearences || 0;
+        return { apps, minutes: st.games?.minutes || 0, goals: st.goals?.total || 0, assists: st.goals?.assists || 0,
+          shots: st.shots?.total || 0, sot: st.shots?.on || 0, injured: hit.player?.injured };
+      },
+      async injuries(sport, home, away, start) {
+        const lg = AF_LEAGUE[sport]; if (!lg) return [];
+        const d = new Date(start).toISOString().slice(0, 10);
+        const fx = await af(`/fixtures?date=${d}&league=${lg}&season=${season()}`);
+        const g = (fx || []).find(z => labelMatch(home, z.teams?.home?.name) || labelMatch(z.teams?.home?.name || '', nickname(home)));
+        if (!g) return [];
+        const inj = await af(`/injuries?fixture=${g.fixture?.id}`);
+        return (inj || []).map(z => ({ name: z.player?.name, team: z.team?.name, type: z.player?.type, reason: z.player?.reason }));
+      },
+    };
+  }
+  async function apiFootballNotes(x, af) {
+    if (!af || !x.sport?.startsWith('soccer')) return [];
+    const out = [];
+    try {
+      const inj = await af.injuries(x.sport, x.home, x.away, x.start);
+      if (x.type === 'prop') {
+        const me = inj.find(i => normName(i.name).endsWith(normName(String(x.player).split(' ').slice(-1)[0])));
+        if (me) out.push({ tone: 'b', text: `🚑 ${esc(x.player)} on the injury list (${esc(me.reason || me.type || 'injury')}) — confirm he plays` });
+        const p = await af.player(x.sport, x.player);
+        if (p && p.apps >= 3) {
+          const per = v => v / p.apps, over = x.side === 'Over', T = t => over ? t : t === 'g' ? 'b' : t === 'b' ? 'g' : t;
+          if (x.market === 'player_goal_scorer_anytime') {
+            const g = per(p.goals);
+            out.push({ tone: T(g >= 0.45 ? 'g' : g <= 0.15 ? 'b' : 'n'), text: `⚽ ${p.goals} goals in ${p.apps} apps this season (${g.toFixed(2)}/game, ${p.sot} shots on target)` });
+          } else if (x.market === 'player_shots_on_target' || x.market === 'player_shots') {
+            const v = per(x.market === 'player_shots' ? p.shots : p.sot), need = Math.floor(x.point) + 1, lbl = x.market === 'player_shots' ? 'shots' : 'shots on target';
+            out.push({ tone: T(v >= need * 1.25 ? 'g' : v <= need * 0.6 ? 'b' : 'n'), text: `🎯 ${v.toFixed(1)} ${lbl}/game this season (needs ${need}+)` });
+          } else if (x.market === 'player_assists') {
+            const a = per(p.assists);
+            out.push({ tone: T(a >= 0.3 ? 'g' : a <= 0.08 ? 'b' : 'n'), text: `🅰️ ${p.assists} assists in ${p.apps} apps (${a.toFixed(2)}/game)` });
+          }
+        }
+      } else if (x.type === 'line' && x.team && x.team !== 'Draw') {
+        const out2 = inj.filter(i => /missing/i.test(i.type || '')); // ruled out, not just questionable
+        const mine = out2.filter(i => labelMatch(x.team, i.team) || labelMatch(i.team || '', nickname(x.team)));
+        const theirs = out2.filter(i => !mine.includes(i));
+        if (mine.length >= 2) out.push({ tone: 'b', text: `🚑 ${esc(x.team)} missing ${mine.length}: ${esc(mine.slice(0, 3).map(i => i.name).join(', '))}${mine.length > 3 ? '…' : ''}` });
+        if (theirs.length >= 2) out.push({ tone: 'g', text: `🚑 Opponent missing ${theirs.length}: ${esc(theirs.slice(0, 3).map(i => i.name).join(', '))}${theirs.length > 3 ? '…' : ''}` });
+      }
+    } catch (e) {}
+    return out;
+  }
+
   async function extraNotes(x, bd, ctx) {
     const { getJSON, get, fairML } = ctx, out = [];
     if (bd && (bd.kind === 'fb' || x.sport === 'baseball_mlb')) out.push(...weatherNotes(await weatherFor(bd, getJSON), x));
@@ -1010,6 +1083,7 @@
     if (x.sport === 'icehockey_nhl') out.push(...goalieNotes(await nhlGoalies(x, bd, getJSON), x, bd));
     if (x.sport === 'americanfootball_nfl' && x.type === 'prop') out.push(...nflverseNotes((await nflverse(get))[normName(x.player)], x));
     if (x.sport === 'baseball_mlb' && x.type === 'line') out.push(...await mlbProbables(x, getJSON));
+    if (ctx.af) out.push(...await apiFootballNotes(x, ctx.af));
     return out;
   }
 
@@ -1148,7 +1222,7 @@
     legsFromEvents, propsFromEvent, oneSidedFromEvent, altsFromEvent, altPropsFromEvent, ladderModel, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
     parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
     pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult, liveStatus,
-    extraNotes, weatherFor, marketsFor, nhlGoalies, nflverse };
+    extraNotes, weatherFor, marketsFor, nhlGoalies, nflverse, makeApiFootball, apiFootballNotes };
   root.Engine = Engine;
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
