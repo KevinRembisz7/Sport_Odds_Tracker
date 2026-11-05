@@ -157,6 +157,17 @@
   .dotlive { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); margin-right: 6px; animation: pulse 1.4s infinite; vertical-align: middle; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
   .livebanner { display: flex; align-items: center; gap: 6px; background: var(--badbg); border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent); border-radius: 12px; padding: 10px 14px; margin: 4px 0 12px; cursor: pointer; font-size: 14px; }
+  .seg { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 14px; }
+  .seg button { border: 1px solid var(--line); background: var(--panel); border-radius: 12px; padding: 8px 14px; font-weight: 700; font-size: 14px; }
+  .seg button span { margin-left: 4px; font-size: 11px; background: var(--chip); border-radius: 999px; padding: 1px 7px; color: var(--muted); }
+  .seg button.on { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; border-color: transparent; }
+  .seg button.on span { background: rgba(255,255,255,.22); color: #fff; }
+  .sec.sub { margin-top: 18px; } .sec.sub h2 { font-size: 16px; }
+  .card.player { cursor: default; } .card.player:hover { transform: none; }
+  .prow { display: flex; align-items: center; gap: 8px; background: var(--panel2); border-radius: 10px; padding: 8px 10px; cursor: pointer; }
+  .prow .t { flex: 1; min-width: 0; font-size: 13px; } .prow .t b { display: block; } .prow .t span { font-size: 12px; }
+  .prow.best { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--edge) 55%, transparent); }
+  .prow .add { margin-left: 0; padding: 4px 10px; }
   .howto { background: var(--edgebg); border-radius: 12px; padding: 10px 14px; font-size: 13.5px; margin-bottom: 12px; }
 
   /* section heads */

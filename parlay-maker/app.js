@@ -14,7 +14,7 @@
     tab: store.get('tab', 'top'), lg: 'ALL', market: 'ALL', q: '', sort: 'ev',
     slip: store.get('slip', []), bankroll: store.get('bankroll', 500), kfrac: store.get('kfrac', 0.25),
     key: store.get('key', ''), budget: store.get('budget2', 8), allBooks: store.get('allBooks', false),
-    myBook: store.get('myBook', 'bet365'), prices: store.get('prices', {}), type: 'ALL', shown: 120,
+    myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), prices: store.get('prices', {}), type: 'ALL', shown: 120,
   };
   const B365 = () => S.myBook === 'bet365';
   const EDGE_BUFFER = 0.02; // target price = break-even + 2% EV
@@ -74,7 +74,7 @@
     if (x.type === 'prop') return { n: x.player, p: `${x.side} ${x.point} ${x.statLabel}`, g: `${x.team || ''}${x.opp ? ' vs ' + x.opp : ''} · ${x.game}` };
     if (x.market === 'totals') return { n: x.game, p: x.pick, g: 'Game total' };
     const g = gameOf(x), t = teamSide(x);
-    const sub = x.market === 'h2h' ? 'Moneyline' : `Spread ${x.point > 0 ? '+' : ''}${x.point}`;
+    const sub = (x.market === 'h2h' ? 'Moneyline' : `Spread ${x.point > 0 ? '+' : ''}${x.point}`) + (x.alt ? ' · alt line' : '');
     return { n: x.team, p: sub, g: (t && g ? `${t.rec ? t.rec + ' · ' : ''}` : '') + x.game };
   }
   function sparkSVG(hit, line, w = 120, h = 34) {
@@ -112,7 +112,7 @@
   }
 
   // ---------- views ----------
-  const TABS = [['top', '🔥 Top Picks'], ['live', '🔴 Live'], ['money', '💰 Money Builder'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['record', '📈 Record'], ['how', '📘 How it works']];
+  const TABS = [['top', '🔥 Top Picks'], ['live', '🔴 Live'], ['money', '💰 Money Builder'], ['board', '🗂️ Bet Board'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['record', '📈 Record'], ['how', '📘 How it works']];
   function renderTabs() {
     $('tabs').innerHTML = TABS.map(([k, l]) => [k, k === 'sheet' && B365() ? '📋 bet365 Sheet' : l]).map(([k, l]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
   }
@@ -122,7 +122,10 @@
     return items.filter(x => (S.lg === 'ALL' || x.lg === S.lg) && (S.market === 'ALL' || x.statLabel === S.market)
       && (S.type === 'ALL' || x.type === S.type) && (!q || E.norm(x.pick + ' ' + x.game).includes(q)));
   }
+  const LG_ORDER = ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'NHL', 'MLB', 'EPL', 'UCL', 'ATP', 'WTA', 'MMA'];
+  const lgRank = x => { const i = LG_ORDER.indexOf(x.lg); return i < 0 ? 99 : i; };
   function sortItems(items) {
+    if (S.sort === 'sport') return [...items].sort((a, b) => lgRank(a) - lgRank(b) || (b.ev ?? -9) - (a.ev ?? -9));
     const k = { ev: x => x.ev ?? -9, vibe: x => (x.vibe?.score || 0) + x.ev, hit: x => x.vibe?.hit?.l10 ?? -1, time: x => -new Date(x.start) }[S.sort] || (x => x.ev);
     return [...items].sort((a, b) => k(b) - k(a));
   }
@@ -134,7 +137,7 @@
       + (markets && markets.length > 2 ? '<span style="width:8px"></span>' + markets.map(m => `<button class="chip ${S.market === m ? 'on' : ''}" data-mk="${esc(m)}">${m === 'ALL' ? 'All stats' : esc(m)}</button>`).join('') : '')
       + `<span class="spacer"></span><input id="q" placeholder="Search team or player" value="${esc(S.q)}" size="18">
          ${opts.sheet ? '<select id="type"><option value="ALL">Lines + props</option><option value="line">Game lines</option><option value="prop">Player props</option></select>' : ''}
-         <select id="sort"><option value="ev">Sort: Edge</option><option value="vibe">Sort: Vibe</option>${opts.markets ? '<option value="hit">Sort: Hit rate</option>' : ''}<option value="time">Sort: Start time</option></select>`;
+         <select id="sort"><option value="ev">Sort: Edge</option><option value="vibe">Sort: Vibe</option>${opts.markets ? '<option value="hit">Sort: Hit rate</option>' : ''}<option value="time">Sort: Start time</option><option value="sport">Sort: Sport</option></select>`;
     $('sort').value = S.sort;
     if ($('type')) $('type').value = S.type;
   }
@@ -332,6 +335,54 @@
     const on = Ls.filter(L => L.winning || L.result === 'won').length;
     return `<div class="livebanner" data-tab="live"><span class="dotlive"></span><b>LIVE</b> · ${Ls.length} leg${Ls.length > 1 ? 's' : ''} in play · <b>${on}</b> on track <span class="spacer"></span> Open tracker →</div>`;
   }
+  // ---------- bet board: one place for every kind of bet ----------
+  const SECTIONS = [
+    ['totals', '📈 Over/Unders', x => x.type === 'line' && x.market === 'totals' && !x.alt],
+    ['sides', '📏 Spreads & ML', x => x.type === 'line' && x.market !== 'totals' && !x.alt],
+    ['alts', '🔀 Alt lines', x => x.alt],
+    ['props', '🎯 Prop picks', x => x.type === 'prop'],
+    ['players', '🧍 Player picks', x => x.type === 'prop'],
+  ];
+  function sportSections(items, renderList) {
+    // when sorted by sport, show a header per league
+    if (S.sort !== 'sport') return renderList(items);
+    const by = {};
+    for (const x of items) (by[x.lg] ||= []).push(x);
+    return Object.keys(by).sort((a, b) => lgRank({ lg: a }) - lgRank({ lg: b }))
+      .map(lg => `<div class="sec sub"><h2>${by[lg][0].emoji} ${esc(lg)}</h2><span>${by[lg].length}</span></div>${renderList(by[lg])}`).join('');
+  }
+  function playerCard(name, ps) {
+    ps = [...ps].sort((a, b) => (b.ev + (b.vibe?.score || 0) * 0.01) - (a.ev + (a.vibe?.score || 0) * 0.01));
+    const top = ps[0], t = titleOf(top);
+    return `<article class="card player">
+      <div class="c-top"><span class="tag">${top.emoji} ${esc(top.lg)}</span><span>${esc(fmtTime(top.start))}</span><span class="spacer"></span><span class="tag">${ps.length} play${ps.length > 1 ? 's' : ''}</span></div>
+      <div class="c-main">${avatar(top)}<div class="c-title"><div class="n">${esc(name)}</div><div class="g">${esc(t.g)}</div></div></div>
+      ${ps.map((x, i) => `<div class="prow ${i === 0 ? 'best' : ''}" data-open="${esc(x.id)}">
+        <div class="t"><b>${i === 0 ? '⭐ ' : ''}${esc(x.side)} ${x.point} ${esc(x.statLabel)}</b>
+          <span class="muted">${toAm(x.dec)} ${esc(x.book)}${x.vibe?.hit ? ` · hit ${x.vibe.hit.hits}/${x.vibe.hit.n}` : ''}${B365() ? ` · bet365 ≥ ${targetAm(x)}` : ''}</span></div>
+        <span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)}</span>
+        <button class="add ${S.slip.includes(x.id) ? 'in' : ''}" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓' : '+'}</button></div>`).join('')}
+    </article>`;
+  }
+  function viewBoard() {
+    const all = filtered([...card.lines, ...card.props]).filter(x => !isSus(x));
+    const counts = Object.fromEntries(SECTIONS.map(([k, , fn]) => [k, k === 'players' ? new Set(all.filter(fn).map(x => x.player)).size : all.filter(fn).length]));
+    const [key, , fn] = SECTIONS.find(s2 => s2[0] === S.section) || SECTIONS[3];
+    const items = sortItems(all.filter(fn));
+    let body;
+    if (key === 'players') {
+      const groups = {};
+      for (const x of items) (groups[x.player] ||= []).push(x);
+      const list = Object.entries(groups).sort((a, b) => S.sort === 'sport' ? lgRank(a[1][0]) - lgRank(b[1][0]) : Math.max(...b[1].map(x => x.ev)) - Math.max(...a[1].map(x => x.ev)));
+      body = list.length ? `<div class="grid">${list.map(([n, ps]) => playerCard(n, ps)).join('')}</div>` : empty('No player picks match these filters.');
+    } else {
+      body = items.length ? sportSections(items, xs => `<div class="grid">${xs.map(x => pickCard_(x)).join('')}</div>`)
+        : empty(key === 'alts' ? 'No +EV alt lines on today’s card. Alt lines cost 2 credits per game, so they only get pulled when the day’s budget has room (mostly weekends on the free plan), and most come out priced fair.' : 'Nothing +EV in this section with these filters.');
+    }
+    return `<div class="sec"><h2>🗂️ Bet Board</h2><span>every +EV bet on today's card, organized by type</span></div>
+      <div class="seg">${SECTIONS.map(([k, l]) => `<button class="${k === key ? 'on' : ''}" data-section="${k}">${l} <span>${counts[k]}</span></button>`).join('')}</div>
+      ${body}`;
+  }
   function viewProps() {
     const items = sortItems(filtered(card.props));
     return `<div class="sec"><h2>Player props</h2><span>${card.props.length} +EV prop sides · bars = last games vs the line</span></div>
@@ -442,8 +493,8 @@
         <p>The daily GitHub Action writes <code>data/latest.js</code>. Or open ⚙️ Settings, paste your Odds API key and hit ↻ Live refresh.</p>`);
       return;
     }
-    const v = { top: viewTop, live: viewLive, money: viewMoney, record: viewRecord, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
-    renderFilters(S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' || S.tab === 'live' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? card.props : S.tab === 'lines' ? card.lines : [...card.lines, ...card.props], { markets: S.tab === 'props', sheet: S.tab === 'sheet' });
+    const v = { top: viewTop, board: viewBoard, live: viewLive, money: viewMoney, record: viewRecord, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
+    renderFilters(S.tab === 'board' ? [...card.lines, ...card.props] : S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' || S.tab === 'live' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? card.props : S.tab === 'lines' ? card.lines : [...card.lines, ...card.props], { markets: S.tab === 'props', sheet: S.tab === 'sheet' });
     $('view').innerHTML = v();
   }
 
@@ -563,13 +614,14 @@
     if (e.target.closest('input.pin')) return;
     if (e.target.id === 'moreBtn') { S.shown += 150; render(); return; }
     if (e.target.id === 'liveNow') { refreshLive(true); return; }
-    const el = e.target.closest('[data-add],[data-open],[data-tab],[data-lg],[data-mk],[data-close],[data-loadparlay],#overlay,#slipbar,#liveBtn,#setBtn,#saveSet,#dropLive,#clearSlip,#buildBtn');
+    const el = e.target.closest('[data-add],[data-open],[data-tab],[data-section],[data-lg],[data-mk],[data-close],[data-loadparlay],#overlay,#slipbar,#liveBtn,#setBtn,#saveSet,#dropLive,#clearSlip,#buildBtn');
     if (!el) return;
     if (el.dataset.add) { e.stopPropagation(); toggleSlip(el.dataset.add); return; }
     if (el.dataset.open) { openDetail(el.dataset.open); return; }
     if (el.dataset.tab) { e.preventDefault(); window.scrollTo({ top: 0 }); S.tab = el.dataset.tab; store.set('tab', S.tab); S.market = 'ALL'; render(); return; }
     if (el.dataset.lg) { S.lg = el.dataset.lg; S.market = 'ALL'; render(); return; }
     if (el.dataset.mk) { S.market = el.dataset.mk; render(); return; }
+    if (el.dataset.section) { S.section = el.dataset.section; store.set('section', S.section); render(); return; }
     if (el.dataset.loadparlay) { S.slip = el.dataset.loadparlay.split(','); store.set('slip', S.slip); render(); openSlip(); return; }
     if (el.hasAttribute('data-close') || el.id === 'overlay') { closeAll(); return; }
     switch (el.id) {

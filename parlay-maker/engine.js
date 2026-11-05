@@ -131,6 +131,44 @@
     return out;
   }
 
+  // ---------------- alt lines ----------------
+  // Alternate spreads/totals priced the same way as props: Pinnacle's no-vig pair at that exact number, else the
+  // median no-vig across 3+ books. Items look like normal spread/total legs (alt: true) so grading + live tracking work.
+  function altsFromEvent(ev, sport) {
+    const S = SPORTS[sport] || {}, out = [], groups = {};
+    for (const b of ev.bookmakers || []) for (const m of b.markets || []) {
+      if (m.key !== 'alternate_spreads' && m.key !== 'alternate_totals') continue;
+      for (const o of m.outcomes || []) {
+        if (o.point == null) continue;
+        let k, side;
+        if (m.key === 'alternate_totals') { if (!/^(over|under)$/i.test(o.name)) continue; k = `totals|${o.point}`; side = o.name.toLowerCase() === 'over' ? 'a' : 'b'; }
+        else { const homePt = o.name === ev.home_team ? o.point : -o.point; k = `spreads|${homePt}`; side = o.name === ev.home_team ? 'a' : 'b'; }
+        const g = groups[k] ||= {};
+        (g[b.key] ||= { title: b.title })[side] = toDec(o.price);
+      }
+    }
+    for (const [k, books] of Object.entries(groups)) {
+      const [market, pt] = k.split('|'), point = +pt;
+      const pairs = Object.entries(books).filter(([, v]) => v.a && v.b);
+      let fairA, src;
+      if (books.pinnacle?.a && books.pinnacle?.b) { fairA = devig([books.pinnacle.a, books.pinnacle.b])[0]; src = 'Pinnacle'; }
+      else if (pairs.length >= 3) { fairA = median(pairs.map(([, v]) => devig([v.a, v.b])[0])); src = `Consensus of ${pairs.length}`; }
+      else continue;
+      for (const side of ['a', 'b']) {
+        const prices = Object.entries(books).filter(([bk, v]) => bk !== 'pinnacle' && v[side]).map(([bk, v]) => ({ key: bk, title: v.title, dec: v[side] }));
+        if (!prices.length) continue;
+        const fairP = side === 'a' ? fairA : 1 - fairA;
+        let team = null, p = point, pick;
+        if (market === 'totals') pick = `${side === 'a' ? 'Over' : 'Under'} ${point}`;
+        else { team = side === 'a' ? ev.home_team : ev.away_team; p = side === 'a' ? point : -point; pick = `${team} ${p > 0 ? '+' : ''}${p}`; }
+        out.push({ type: 'line', alt: true, id: `${ev.id}|alt|${k}|${side}`, eventId: ev.id, sport, lg: S.lg || sport, emoji: S.emoji || '🎲',
+          game: `${ev.away_team} @ ${ev.home_team}`, home: ev.home_team, away: ev.away_team, team, market, point: p,
+          pick: `${pick} (alt)`, prices, fairP, src, start: ev.commence_time });
+      }
+    }
+    return out;
+  }
+
   function applyBooks(items, allowAll) {
     for (const l of items) {
       if (!l.prices) continue;
@@ -481,6 +519,18 @@
       } catch (err) { log(`props ${e.id} failed: ${err.message}`); }
     }
     log(`props pulled for ${new Set(props.map(p => p.eventId)).size} games, ${props.length} prop sides`);
+    // alt spreads/totals for the soonest big-league games if there's room (2 credits per game)
+    let altGames = 0;
+    const altCands = Object.values(events).filter(e => ['fb', 'bb', 'hk'].includes(SPORTS[e.sport].kind) && new Date(e.commence_time) - now < propWindowH * 36e5)
+      .sort((a, b) => SPORTS[a.sport].pri - SPORTS[b.sport].pri || a.commence_time.localeCompare(b.commence_time));
+    for (const e of altCands) {
+      if (altGames >= 4 || used + 2 > B) break;
+      try {
+        const r = await odds(`/sports/${e.sport}/events/${e.id}/odds?bookmakers=${BOOKS}&markets=alternate_spreads,alternate_totals&oddsFormat=american`); track(r.headers);
+        lines.push(...altsFromEvent(r.json, e.sport)); altGames++;
+      } catch (err) { log(`alts ${e.id} failed: ${err.message}`); }
+    }
+    if (altGames) log(`alt lines pulled for ${altGames} games`);
     // leftover budget (no props today, e.g.) goes to lines for the next-busiest sports we skipped
     for (const s of withGames) {
       if (card.sports.some(x => x.key === s)) continue;
@@ -706,7 +756,7 @@
   }
 
   const Engine = { SPORTS, PROP_STATS, STALE, PROP_STALE, toDec, toAm, pct, esc, devig, norm, normName,
-    legsFromEvents, propsFromEvent, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
+    legsFromEvents, propsFromEvent, altsFromEvent, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
     parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
     pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult, liveStatus };
   root.Engine = Engine;
