@@ -57,6 +57,7 @@
     batter_total_bases: { label: 'Total Bases', keys: ['totalBases', 'TB'] },
     pitcher_strikeouts: { label: 'Ks', keys: ['strikeouts', 'K'] },
     player_goal_scorer_anytime: { label: 'Goals', keys: ['totalGoals', 'goals', 'G'] },
+    player_goals: { label: 'Goals', keys: ['goals', 'G', 'totalGoals'] },
     player_shots_on_target: { label: 'SOT', keys: ['shotsOnTarget', 'SOT', 'ST'] },
     player_shots: { label: 'Shots', keys: ['totalShots', 'shots', 'SH'] },
   };
@@ -774,13 +775,18 @@
     const getJSON = url => cache[url] ||= get(url).then(r => r.json).catch(() => null);
     const espnLines = await espnBoardLines(card, getJSON, nowD).catch(() => []);
     card.board.push(...espnLines);
+    card.board = card.board.filter(x => !x.kalshi);
+    const kp = await kalshiProps(card, get, getJSON, nowD).catch(() => []);
+    const have = new Set(card.board.filter(x => x.type === 'prop').map(x => `${x.market}|${normName(x.player)}|${x.point}`));
+    card.board.push(...kp.filter(k => !have.has(`${k.market}|${normName(k.player)}|${k.point}`)));
+    log(`Kalshi player props: ${kp.length} liquid rungs across ${new Set(kp.map(k => k.eventId)).size} games`);
     log(`free ESPN/DraftKings lines added for ${new Set(espnLines.map(x => x.eventId)).size} more games`);
     const espn = makeEspn(getJSON);
     await mapLimit(lines, 6, async l => {
       const bd = await espn.breakdown(l);
       if (bd) card.games[l.eventId] = bd;
       l.vibe = bd ? analyzeLine(l, bd, fairML) : { score: 0, items: [{ tone: 'n', text: 'No ESPN matchup data for this game — the edge is pure price.' }] };
-      const ex = await extraNotes(l, bd, { getJSON, get, fairML, af }).catch(() => []);
+      const ex = await extraNotes(l, bd, { getJSON, get, fairML, af, kp }).catch(() => []);
       if (ex.length) { l.vibe.items.push(...ex); l.vibe.score = scoreOf(l.vibe.items); }
     });
     await mapLimit(props, 6, async p => {
@@ -797,7 +803,7 @@
       p.headshot = ath?.headshot || ''; p.team = side ? bd[side].abbr : '';
       if (side) p.opp = bd[side === 'home' ? 'away' : 'home'].abbr;
       p.vibe = analyzeProp(p, logs, bd, side);
-      const ex = await extraNotes(p, bd, { getJSON, get, fairML, af }).catch(() => []);
+      const ex = await extraNotes(p, bd, { getJSON, get, fairML, af, kp }).catch(() => []);
       if (ex.length) { p.vibe.items.push(...ex); p.vibe.score = scoreOf(p.vibe.items); }
     });
     // vibe + extras for every board game line (not just +EV), compact, so every game shows a lean
@@ -807,7 +813,7 @@
       const bd = await espn.breakdown(x);
       if (bd) card.games[x.eventId] ||= bd;
       const v = bd ? analyzeLine(x, bd, fairML) : { score: 0, items: [] };
-      const ex = await extraNotes(x, bd, { getJSON, get, fairML, af }).catch(() => []);
+      const ex = await extraNotes(x, bd, { getJSON, get, fairML, af, kp }).catch(() => []);
       v.items.push(...ex); v.score = scoreOf(v.items);
       x.vibe = { score: v.score, items: v.items.slice(0, 6) };
     });
@@ -1103,6 +1109,93 @@
     return out;
   }
 
+  // ---------------- Kalshi player props (free, keyless) ----------------
+  // Real-money prediction-market prices for player ladders ("Oso Ighodaro: 15+ points"). Liquid markets only (bid > 0,
+  // spread ≤ 6¢); the mid is close to a no-vig price. They fill the fair-odds board / bet365 targets for players the
+  // Odds API budget didn't reach, and give a second opinion on the app's own prop picks. Requests are throttled
+  // (Kalshi rate-limits bursts) and retried once.
+  const KALSHI_PROPS = {
+    basketball_nba: [['KXNBAPTS', 'player_points'], ['KXNBAREB', 'player_rebounds'], ['KXNBAAST', 'player_assists'], ['KXNBA3PT', 'player_threes']],
+    icehockey_nhl: [['KXNHLPTS', 'player_points'], ['KXNHLAST', 'player_assists'], ['KXNHLGOAL', 'player_goals']],
+    americanfootball_nfl: [['KXNFLRECYDS', 'player_reception_yds'], ['KXNFLREC', 'player_receptions'], ['KXNFLPASSYDS', 'player_pass_yds'], ['KXNFLRSHYDS', 'player_rush_yds']],
+    soccer_epl: [['KXEPLGOAL', 'player_goal_scorer_anytime'], ['KXEPLAST', 'player_assists']],
+    soccer_uefa_champs_league: [['KXUCLGOAL', 'player_goal_scorer_anytime'], ['KXUCLSOT', 'player_shots_on_target'], ['KXUCLSHOT', 'player_shots'], ['KXUCLAST', 'player_assists']],
+    soccer_spain_la_liga: [['KXLALIGAGOAL', 'player_goal_scorer_anytime']], soccer_italy_serie_a: [['KXSERIEAGOAL', 'player_goal_scorer_anytime']],
+    soccer_germany_bundesliga: [['KXBUNDESLIGAGOAL', 'player_goal_scorer_anytime']], soccer_france_ligue_one: [['KXLIGUE1GOAL', 'player_goal_scorer_anytime']],
+    soccer_usa_mls: [['KXMLSGOAL', 'player_goal_scorer_anytime']],
+    baseball_mlb: [['KXMLBHIT', 'batter_hits'], ['KXMLBKS', 'pitcher_strikeouts']],
+  };
+  const KALSHI_ALIAS = { WSH: ['WAS'], WAS: ['WSH'], UTAH: ['UTA'], UTA: ['UTAH'] };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  async function kalshiFetch(get, url) {
+    for (let tries = 0; tries < 2; tries++) {
+      try { const r = await get(url); if (r?.json?.markets) return r.json; } catch (e) {}
+      await sleep(1500);
+    }
+    return null;
+  }
+  async function kalshiProps(card, get, getJSON, now = new Date(), windowH = 30) {
+    const out = [], games = {}, abbrOk = (k, e) => !!k && !!e && (k === e || k.startsWith(e) || e.startsWith(k) || (KALSHI_ALIAS[e] || []).includes(k));
+    async function gameFor(sport, code, when) {
+      const S = SPORTS[sport]; if (!S?.espn) return null;
+      const key = sport + code + when.toISOString().slice(0, 10);
+      if (key in games) return games[key];
+      const days = [...new Set([-14, -6, 0].map(h => etDate(new Date(+when + h * 36e5).toISOString())))];
+      const evs = (await Promise.all(days.map(d => getJSON(`https://site.api.espn.com/apis/site/v2/sports/${S.espn}/scoreboard?dates=${d}${S.q || '&limit=300'}`)))).flatMap(sb => sb?.events || []);
+      let hit = null;
+      for (const e of evs) {
+        const cs = e.competitions[0].competitors, h = cs.find(c => c.homeAway === 'home'), a = cs.find(c => c.homeAway === 'away');
+        if (!h || !a || Math.abs(new Date(e.date) - when) > 20 * 36e5) continue;
+        for (let i = 2; i <= 4 && !hit; i++) if (abbrOk(code.slice(0, i), a.team.abbreviation) && abbrOk(code.slice(i), h.team.abbreviation)) hit = { e, h, a };
+        if (hit) break;
+      }
+      if (!hit) return games[key] = null;
+      const home = hit.h.team.displayName, away = hit.a.team.displayName, start = new Date(hit.e.date).toISOString();
+      // reuse the odds-board event id when we have the same game, so it groups with everything else
+      const match = (card.board || []).find(x => teamMatches(hit.h.team, x.home) >= 1 && teamMatches(hit.a.team, x.away) >= 1 && Math.abs(new Date(x.start) - new Date(start)) < 4 * 36e5);
+      return games[key] = { home, away, start, eventId: match?.eventId || 'espn' + hit.e.id };
+    }
+    for (const [sport, list] of Object.entries(KALSHI_PROPS)) {
+      const S = SPORTS[sport];
+      for (const [ser, market] of list) {
+        let cursor = '', pages = 0;
+        do {
+          const d = await kalshiFetch(get, `https://api.elections.kalshi.com/trade-api/v2/markets?limit=1000&status=open&series_ticker=${ser}${cursor ? '&cursor=' + cursor : ''}`);
+          await sleep(250);
+          if (!d) break;
+          for (const m of d.markets || []) {
+            if (m.strike_type !== 'greater' || m.floor_strike == null || !m.title?.includes(':')) continue;
+            const bid = +m.yes_bid_dollars, ask = +m.yes_ask_dollars;
+            if (!(bid > 0 && ask > 0 && ask - bid <= 0.06)) continue;
+            const mid = (bid + ask) / 2;
+            if (mid < 0.08 || mid > 0.92) continue; // long shots / near-locks add size, not value
+            const when = new Date(m.occurrence_datetime || m.expected_expiration_time);
+            const code = (m.event_ticker.split('-')[1] || '').replace(/^\d{2}[A-Z]{3}\d{2}/, '');
+            const g = await gameFor(sport, code, when);
+            if (!g) continue;
+            const t = new Date(g.start) - now;
+            if (t <= 0 || t > windowH * 36e5) continue;
+            const player = m.title.split(':')[0].trim(), point = +m.floor_strike, label = PROP_STATS[market]?.label || market;
+            out.push({ type: 'prop', kalshi: true, alt: true, id: `kalshi|${m.ticker}`, eventId: g.eventId, sport, lg: S.lg, emoji: S.emoji,
+              game: `${g.away} @ ${g.home}`, home: g.home, away: g.away, start: g.start, player, market, point, side: 'Over', statLabel: label,
+              pick: market === 'player_goal_scorer_anytime' ? `${player} anytime goal` : `${player} ${Math.floor(point) + 1}+ ${label}`,
+              fairP: mid, src: `Kalshi traders (${Math.round((ask - bid) * 100)}¢ spread)` });
+          }
+          cursor = d.cursor || '';
+        } while (cursor && ++pages < 3);
+      }
+    }
+    return out;
+  }
+  function kalshiNote(x, kp) {
+    if (x.type !== 'prop' || x.kalshi || !kp?.length) return [];
+    const k = kp.find(q => q.market === x.market && q.point === x.point && normName(q.player) === normName(x.player));
+    if (!k) return [];
+    const p = x.side === 'Over' ? k.fairP : 1 - k.fairP, d = p - x.fairP;
+    const tone = d >= 0.04 ? 'g' : d <= -0.04 ? 'b' : 'n';
+    return [{ tone, text: `📈 Kalshi traders: <b>${pct(p, 0)}</b> vs ${pct(x.fairP, 0)} fair${tone === 'g' ? ' — real-money market agrees' : tone === 'b' ? ' — real-money market disagrees' : ''}` }];
+  }
+
   async function extraNotes(x, bd, ctx) {
     const { getJSON, get, fairML } = ctx, out = [];
     if (bd && (bd.kind === 'fb' || x.sport === 'baseball_mlb')) out.push(...weatherNotes(await weatherFor(bd, getJSON), x));
@@ -1111,6 +1204,7 @@
     if (x.sport === 'americanfootball_nfl' && x.type === 'prop') out.push(...nflverseNotes((await nflverse(get))[normName(x.player)], x));
     if (x.sport === 'baseball_mlb' && x.type === 'line') out.push(...await mlbProbables(x, getJSON));
     if (ctx.af) out.push(...await apiFootballNotes(x, ctx.af));
+    out.push(...kalshiNote(x, ctx.kp));
     return out;
   }
 
@@ -1299,7 +1393,7 @@
     legsFromEvents, propsFromEvent, oneSidedFromEvent, altsFromEvent, altPropsFromEvent, ladderModel, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
     parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
     pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult, liveStatus, closingFor, boxRows,
-    extraNotes, weatherFor, marketsFor, nhlGoalies, nflverse, makeApiFootball, apiFootballNotes };
+    extraNotes, weatherFor, marketsFor, nhlGoalies, nflverse, makeApiFootball, apiFootballNotes, kalshiProps, kalshiNote };
   root.Engine = Engine;
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

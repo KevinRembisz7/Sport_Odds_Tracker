@@ -71,7 +71,7 @@
     if (t?.logo) return `<div class="avatar logo ${cls}"><img src="${esc(t.logo)}" alt="" loading="lazy" onerror="this.remove()"></div>`;
     return `<div class="avatar ${cls}">${x.emoji || '🎲'}</div>`;
   }
-  const propLabel = x => x.alt && x.side === 'Over' ? `${Math.floor(x.point) + 1}+ ${x.statLabel} · ladder` : `${x.side} ${x.point} ${x.statLabel}${x.alt ? ' · alt' : ''}`;
+  const propLabel = x => x.kalshi ? `${Math.floor(x.point) + 1}+ ${x.statLabel} · Kalshi` : x.alt && x.side === 'Over' ? `${Math.floor(x.point) + 1}+ ${x.statLabel} · ladder` : `${x.side} ${x.point} ${x.statLabel}${x.alt ? ' · alt' : ''}`;
   function titleOf(x) {
     if (x.type === 'prop') return { n: x.player, p: propLabel(x), g: `${x.team || ''}${x.opp ? ' vs ' + x.opp : ''} · ${x.game}` };
     if (x.market === 'totals') return { n: x.game, p: x.pick, g: 'Game total' };
