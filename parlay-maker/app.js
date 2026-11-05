@@ -14,7 +14,7 @@
     tab: store.get('tab', 'top'), lg: 'ALL', market: 'ALL', q: '', sort: 'ev',
     slip: store.get('slip', []), bankroll: store.get('bankroll', 500), kfrac: store.get('kfrac', 0.25),
     key: store.get('key', ''), budget: store.get('budget2', 8), allBooks: store.get('allBooks', false),
-    myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), allPlayers: store.get('allPlayers', false), prices: store.get('prices', {}), type: 'ALL', shown: 120,
+    myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), allPlayers: store.get('allPlayers', false), bestOnly: store.get('bestOnly', false), prices: store.get('prices', {}), type: 'ALL', shown: 120,
   };
   const B365 = () => S.myBook === 'bet365';
   const EDGE_BUFFER = 0.02; // target price = break-even + 2% EV
@@ -124,7 +124,7 @@
     return items.filter(x => (S.lg === 'ALL' || x.lg === S.lg) && (S.market === 'ALL' || x.statLabel === S.market)
       && (S.type === 'ALL' || x.type === S.type) && (!q || E.norm(x.pick + ' ' + x.game).includes(q)));
   }
-  const LG_ORDER = ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'NHL', 'MLB', 'EPL', 'UCL', 'ATP', 'WTA', 'MMA'];
+  const LG_ORDER = ['NFL', 'NCAAF', 'NBA', 'NCAAB', 'NHL', 'MLB', 'EPL', 'UCL', 'LaLiga', 'SerieA', 'Bundesliga', 'Ligue1', 'MLS', 'ATP', 'WTA', 'MMA'];
   const lgRank = x => { const i = LG_ORDER.indexOf(x.lg); return i < 0 ? 99 : i; };
   function sortItems(items) {
     if (S.sort === 'sport') return [...items].sort((a, b) => lgRank(a) - lgRank(b) || (b.ev ?? -9) - (a.ev ?? -9));
@@ -194,10 +194,30 @@
     return `<div class="sec"><h2>📈 Track record</h2><span>auto-graded from final box scores · 1 unit flat stakes · <a href="#" data-tab="record">full history →</a></span></div>
       <div class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr))">${tile('⭐ Pick of the Day', a)}${tile('🎯 Parlay of the Day', b)}</div>`;
   }
+  function clvStats() {
+    const legs = H.flatMap(h => [...(h.clv || []), ...(h.potd?.type === 'line' ? [h.potd] : []), ...(h.parlay?.legs || []).filter(l => l.type === 'line')]);
+    const uniq = [...new Map(legs.map(l => [l.id, l])).values()].filter(l => l.close);
+    const beat = uniq.filter(l => l.close.beat).length, withPct = uniq.filter(l => l.close.clv != null);
+    const avg = withPct.length ? withPct.reduce((a, l) => a + l.close.clv, 0) / withPct.length : null;
+    return { n: uniq.length, beat, avg, pending: legs.filter(l => l.close == null).length };
+  }
+  function clvPanel() {
+    const c = clvStats();
+    const verdict = c.n < 20 ? `Need ~20+ graded lines for a real read (${c.n} so far${c.pending ? `, ${c.pending} waiting for close` : ''}).`
+      : c.beat / c.n >= 0.55 ? '🟢 Beating the close consistently — that’s what a real edge looks like.'
+      : c.beat / c.n >= 0.5 ? '🟡 Roughly even with the close — edge is thin.' : '🔴 The market is moving against these picks — treat the edges with suspicion.';
+    return `<div class="sec"><h2>📉 Closing line value</h2><span>did we get a better price than the final line at kickoff?</span></div>
+      <div class="kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+        <div class="kpi"><div class="l">Beat the close</div><div class="v">${c.n ? `${c.beat}/${c.n}` : '—'}</div><div class="s">${c.n ? pct(c.beat / c.n, 0) + ' of picks' : 'starts after today’s games'}</div></div>
+        <div class="kpi"><div class="l">Avg CLV</div><div class="v" style="color:${c.avg == null ? 'inherit' : c.avg >= 0 ? 'var(--edge)' : 'var(--bad)'}">${c.avg == null ? '—' : signPct(c.avg)}</div><div class="s">vs DraftKings closing no-vig</div></div>
+        <div class="kpi"><div class="l">Verdict</div><div class="s" style="white-space:normal;font-size:13px;color:var(--ink)">${verdict}</div></div>
+      </div>
+      <p class="note">CLV is the pro’s scoreboard: wins and losses take hundreds of bets to mean anything, but consistently getting a better price than the closing line shows the edge is real within a few weeks. Tracks every +EV game line on the card (props have no free closing data).</p>`;
+  }
   function viewRecord() {
-    if (!H.length) return empty('No history yet. Every morning the Pick and Parlay of the Day get saved, then graded from the final box scores the next morning.');
+    if (!H.length) return clvPanel() + empty('No history yet. Every morning the Pick and Parlay of the Day get saved, then graded from the final box scores the next morning.');
     const badge = r => `<span class="res ${esc(r)}">${r === 'won' ? '✅ Won' : r === 'lost' ? '❌ Lost' : r === 'push' ? '➖ Push' : r === 'void' ? '⚪ Void' : r === 'ungraded' ? '— n/a' : '⏳ Pending'}</span>`;
-    return `${recordStrip()}<div class="sec"><h2>Every pick, every result</h2></div>
+    return `${recordStrip()}${clvPanel()}<div class="sec"><h2>Every pick, every result</h2></div>
       <div class="tbl"><div class="scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Pick</th><th>Odds</th><th>Win %</th><th>Result</th><th>Final</th></tr></thead><tbody>
       ${H.map(h => [
         h.potd ? `<tr><td>${esc(h.date.replace(/(\d{4})(\d\d)(\d\d)/, '$2/$3'))}</td><td>⭐ Pick</td><td><b>${esc(h.potd.pick)}</b><br><span class="muted">${esc(h.potd.game)}</span></td><td>${toAm(h.potd.dec)} <span class="muted">${esc(h.potd.book)}</span></td><td>${pct(h.potd.fairP, 0)}</td><td>${badge(h.potd.result)}</td><td class="muted">${esc(h.potd.actual || '')}</td></tr>` : '',
@@ -383,11 +403,23 @@
       : empty('No players match these filters.');
   }
   // sportsbook-style board: every game with spread / total / moneyline for both sides
-  function gameCell(x, label) {
+  // ⭐ pick per game: a sharp +EV side if there is one, else the side the matchup data leans to (vibe, then win chance)
+  function bestSide(sides) {
+    const ok = sides.filter(Boolean);
+    const pos = ok.filter(x => x.dec && x.ev >= 0.01 && !isSus(x) && !x.espnLine).sort((a, b) => (b.ev + (b.vibe?.score || 0) * 0.01) - (a.ev + (a.vibe?.score || 0) * 0.01));
+    if (pos.length) return { x: pos[0], kind: 'ev' };
+    // leans skip heavy favorites (risk $400 to win $100) and long shots — a lean should be a bet worth making
+    const lean = ok.filter(x => (x.vibe?.score || 0) >= 2 && x.fairP >= 0.3 && x.fairP <= 0.78).sort((a, b) => (b.vibe.score - a.vibe.score) || (b.fairP - a.fairP));
+    return lean.length ? { x: lean[0], kind: 'lean' } : null;
+  }
+  function gameCell(x, label, star) {
     if (!x) return '<div class="gcell empty">—</div>';
     const pos = x.dec && x.ev >= 0.01 && !isSus(x);
-    return `<div class="gcell ${pos ? 'pos' : ''}" data-open="${esc(x.id)}">
+    const vs = x.vibe?.score;
+    return `<div class="gcell ${pos ? 'pos' : ''} ${star ? 'star ' + star : ''}" data-open="${esc(x.id)}">
+      ${star ? `<span class="gstar" title="${star === 'ev' ? '+EV pick' : 'Data lean (matchup vibe), not a price edge'}">⭐</span>` : ''}
       <b>${esc(label)}</b>
+      <span class="ghit">${pct(x.fairP, 0)} to hit${vs != null && vs !== 0 ? ` · <span class="${vs >= 2 ? 'good' : vs <= -2 ? 'bad' : ''}">${vs > 0 ? '+' : ''}${vs}</span>` : ''}</span>
       <span class="gp">${x.dec ? toAm(x.dec) : toAm(1 / x.fairP)}</span>
       <small>${B365() ? `<span class="wide">${x.dec ? `fair${x.espnLine ? '*' : ''} ${toAm(1 / x.fairP)} · ` : ''}</span>365 ≥ ${targetAm(x)}` : x.dec ? `fair${x.espnLine ? '*' : ''} ${toAm(1 / x.fairP)}` : 'fair'}</small>
       ${pos ? `<span class="edge">${signPct(x.ev)}</span>` : ''}
@@ -402,19 +434,28 @@
       else if (x.market === 'totals') g.tot[/^over/i.test(x.pick) ? 'o' : 'u'] = x;
     }
     let list = Object.values(games);
+    for (const g of list) g.best = bestSide([...Object.values(g.ml), ...Object.values(g.sp), ...Object.values(g.tot)]);
+    const allCount = list.length;
+    if (S.bestOnly) list = list.filter(g => g.best);
+    list.sort((a, b) => S.bestOnly ? ((b.best?.kind === 'ev') - (a.best?.kind === 'ev')) || ((b.best?.x.vibe?.score || 0) - (a.best?.x.vibe?.score || 0)) : 0);
     list.sort((a, b) => S.sort === 'sport' ? lgRank(a) - lgRank(b) || a.start.localeCompare(b.start) : a.start.localeCompare(b.start));
-    if (!list.length) return empty('No game lines match these filters.');
+    const toggle = `<div class="seg small"><button class="${S.bestOnly ? '' : 'on'}" data-best="0">🏟️ All games (${allCount})</button><button class="${S.bestOnly ? 'on' : ''}" data-best="1">⭐ Best plays only</button></div>`;
+    if (!list.length) return toggle + empty(S.bestOnly ? 'No ⭐ picks right now: no sharp +EV sides and no strong data leans.' : 'No game lines match these filters.');
     const ptxt = p => (p > 0 ? '+' : '') + p;
+    const st = (g, x) => g.best && x && g.best.x.id === x.id ? g.best.kind : '';
     const row = (g, team, logo, totKey) => `<div class="grow">
       <div class="gteam">${logo ? `<img src="${esc(logo)}" alt="" loading="lazy" onerror="this.remove()">` : ''}<span class="wide">${esc(team)}</span><span class="narrow">${esc(team === 'Draw' ? team : team.split(' ').slice(-1)[0])}</span></div>
-      ${gameCell(g.sp[team], g.sp[team] ? ptxt(g.sp[team].point) : '')}
-      ${gameCell(g.tot[totKey], g.tot[totKey] ? `${totKey === 'o' ? 'O' : 'U'} ${g.tot[totKey].point}` : '')}
-      ${gameCell(g.ml[team], 'ML')}
+      ${gameCell(g.sp[team], g.sp[team] ? ptxt(g.sp[team].point) : '', st(g, g.sp[team]))}
+      ${gameCell(g.tot[totKey], g.tot[totKey] ? `${totKey === 'o' ? 'O' : 'U'} ${g.tot[totKey].point}` : '', st(g, g.tot[totKey]))}
+      ${gameCell(g.ml[team], 'ML', st(g, g.ml[team]))}
     </div>`;
     const card1 = g => {
       const gd = card.games?.[g.id], plus = [...Object.values(g.ml), ...Object.values(g.sp), ...Object.values(g.tot)].filter(x => x.dec && x.ev >= 0.01 && !isSus(x)).length;
-      return `<article class="gcard">
+      const b = g.best, why = b ? (b.x.vibe?.items || []).filter(i => i.tone === 'g').slice(0, 2) : [];
+      return `<article class="gcard ${b ? 'has-best' : ''}">
         <div class="c-top"><span class="tag">${g.emoji} ${esc(g.lg)}</span><span>${esc(fmtTime(g.start))}</span><span class="spacer"></span>${plus ? `<span class="edge">${plus} +EV</span>` : ''}</div>
+        ${b ? `<div class="gpick ${b.kind}" data-open="${esc(b.x.id)}">⭐ ${b.kind === 'ev' ? 'Pick' : 'Lean'}: <b>${esc(b.x.pick.replace(/ \(alt\)$/, ''))}</b> ${b.x.dec ? toAm(b.x.dec) : ''} · ${pct(b.x.fairP, 0)} to hit${b.kind === 'ev' ? ` · <span class="good">${signPct(b.x.ev)}</span>` : ''}${b.x.vibe?.score ? ` · vibe ${b.x.vibe.score > 0 ? '+' : ''}${b.x.vibe.score}` : ''}
+          ${why.length ? `<div class="gwhy">${why.map(i => i.text).join(' · ')}</div>` : ''}</div>` : ''}
         <div class="ghead"><span></span><span>Spread</span><span>Total</span><span>ML</span></div>
         ${row(g, g.away, gd?.away.logo, 'o')}
         ${row(g, g.home, gd?.home.logo, 'u')}
@@ -422,7 +463,7 @@
       </article>`;
     };
     const est = items.some(x => x.espnLine);
-    return `<p class="note" style="margin-top:-4px">Each box: the line, best price, fair price${B365() ? ', your bet365 target' : ''}. Green = +EV. Tap a box for details or to add it to your slip.${est ? ' <b>*</b> = fair estimated from DraftKings (free via ESPN) for games we didn\u2019t buy sharp lines for: good for bet365 targets, not for spotting edges.' : ''}</p>`
+    return toggle + `<p class="note" style="margin-top:-4px">⭐ <b>Pick</b> = a sharp +EV side. ⭐ <b>Lean</b> = no price edge, but the matchup data (vibe +2 or better) points that way. Each box: the line, hit %, vibe, best price, fair price${B365() ? ', your bet365 target' : ''}. Green = +EV. Tap a box for details or to add it to your slip.${est ? ' <b>*</b> = fair estimated from DraftKings (free via ESPN) for games we didn\u2019t buy sharp lines for: good for bet365 targets, not for spotting edges.' : ''}</p>`
       + sportSections(list, gs => `<div class="ggrid">${gs.map(card1).join('')}</div>`);
   }
   function viewBoard() {
@@ -679,13 +720,14 @@
     if (e.target.closest('input.pin')) return;
     if (e.target.id === 'moreBtn') { S.shown += 150; render(); return; }
     if (e.target.id === 'liveNow') { refreshLive(true); return; }
-    const el = e.target.closest('[data-add],[data-open],[data-tab],[data-section],[data-allp],[data-lg],[data-mk],[data-close],[data-loadparlay],#overlay,#slipbar,#liveBtn,#setBtn,#saveSet,#dropLive,#clearSlip,#buildBtn');
+    const el = e.target.closest('[data-add],[data-open],[data-tab],[data-section],[data-allp],[data-best],[data-lg],[data-mk],[data-close],[data-loadparlay],#overlay,#slipbar,#liveBtn,#setBtn,#saveSet,#dropLive,#clearSlip,#buildBtn');
     if (!el) return;
     if (el.dataset.add) { e.stopPropagation(); toggleSlip(el.dataset.add); return; }
     if (el.dataset.open) { openDetail(el.dataset.open); return; }
     if (el.dataset.tab) { e.preventDefault(); window.scrollTo({ top: 0 }); S.tab = el.dataset.tab; store.set('tab', S.tab); S.market = 'ALL'; render(); return; }
     if (el.dataset.lg) { S.lg = el.dataset.lg; S.market = 'ALL'; render(); return; }
     if (el.dataset.mk) { S.market = el.dataset.mk; render(); return; }
+    if (el.dataset.best) { S.bestOnly = el.dataset.best === '1'; store.set('bestOnly', S.bestOnly); render(); return; }
     if (el.dataset.allp) { S.allPlayers = el.dataset.allp === '1'; store.set('allPlayers', S.allPlayers); S.shown = 120; render(); return; }
     if (el.dataset.section) { S.section = el.dataset.section; store.set('section', S.section); render(); return; }
     if (el.dataset.loadparlay) { S.slip = el.dataset.loadparlay.split(','); store.set('slip', S.slip); render(); openSlip(); return; }

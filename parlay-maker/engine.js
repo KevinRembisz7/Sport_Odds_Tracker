@@ -22,6 +22,12 @@
     soccer_uefa_champs_league: { lg: 'UCL', emoji: '⚽', espn: 'soccer/uefa.champions', kind: 'other', lines: 'h2h,spreads,totals', pri: 3, oneSided: true,
       props: ['player_goal_scorer_anytime', 'player_shots_on_target', 'player_shots', 'player_assists'] },
     mma_mixed_martial_arts: { lg: 'MMA', emoji: '🥊', kind: 'other', lines: 'h2h', pri: 4 },
+    // ESPN-only leagues: free DraftKings lines via ESPN, no Odds API credits
+    espn_laliga: { lg: 'LaLiga', emoji: '⚽', espn: 'soccer/esp.1', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
+    espn_seriea: { lg: 'SerieA', emoji: '⚽', espn: 'soccer/ita.1', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
+    espn_bundesliga: { lg: 'Bundesliga', emoji: '⚽', espn: 'soccer/ger.1', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
+    espn_ligue1: { lg: 'Ligue1', emoji: '⚽', espn: 'soccer/fra.1', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
+    espn_mls: { lg: 'MLS', emoji: '⚽', espn: 'soccer/usa.1', kind: 'other', lines: 'h2h,spreads,totals', espnOnly: true, pri: 9 },
   };
   // Pinnacle + 9 US books = one "region" worth of credits on The Odds API.
   const BOOKS = 'pinnacle,draftkings,fanduel,betmgm,williamhill_us,espnbet,betrivers,fanatics,betonlineag,bovada';
@@ -431,7 +437,7 @@
       const guards = miss.filter(p => /G/.test(p.pos) && !outD.some(l => l.id === p.id));
       if (guards.length) { const r = leader(A, /assist|point/i); if (r) out.push(`🔥 <b>${esc(r.name)}</b> gets a thinner ${esc(D.abbr)} backcourt — missing ${esc(names(guards))}`); }
     } else if (kind === 'hk') {
-      const g = miss.find(p => p.pos === 'G');
+      const g = miss.find(p => p.pos === 'G' && FRESH(p.status)); // IR goalies are usually backups already priced in
       if (g) out.push(`🥅 ${esc(D.abbr)} goalie <b>${esc(g.name)}</b> is ${esc(g.status.toLowerCase())} — ${esc(A.abbr)} may face a backup`);
       for (const l of outLeaders(D)) out.push(`🚨 ${esc(D.abbr)} without ${esc(l.label.toLowerCase())} leader <b>${esc(l.name)}</b> (${esc(l.val)})`);
     }
@@ -574,7 +580,7 @@
 
     const sp = await odds('/sports'); track(sp.headers);
     const active = new Map(sp.json.filter(s => s.active && !s.has_outrights).map(s => [s.key, s]));
-    const sports = Object.keys(SPORTS).filter(k => active.has(k));
+    const sports = Object.keys(SPORTS).filter(k => active.has(k) && !SPORTS[k].espnOnly);
     // tennis tournaments come and go — add whatever is live
     for (const s of active.values()) if (s.group === 'Tennis' && !sports.includes(s.key) && sports.filter(k => k.startsWith('tennis')).length < 2) {
       SPORTS[s.key] = { lg: /wta/i.test(s.key) ? 'WTA' : 'ATP', emoji: '🎾', kind: 'other', lines: 'h2h', pri: 3, title: s.title };
@@ -707,8 +713,9 @@
   // Free game lines from ESPN's scoreboard (DraftKings' ML / spread / total) for every game we didn't buy lines for.
   // Fair = DraftKings' own no-vig price, labeled as an estimate — it fills the board and bet365 targets, not EV hunting.
   async function espnBoardLines(card, getJSON, now, windowH = 30) {
-    const pairs = (card.board || []).filter(x => x.type === 'line' && !x.espnLine).map(x => [x.home, x.away]);
-    const covered = (h, a) => pairs.some(([ph, pa]) => teamMatches(h, ph) >= 2 && teamMatches(a, pa) >= 2);
+    // same game if both nicknames match and it starts within 4h ("Los Angeles Clippers" vs ESPN's "LA Clippers")
+    const pairs = (card.board || []).filter(x => x.type === 'line' && !x.espnLine).map(x => [x.home, x.away, new Date(x.start)]);
+    const covered = (h, a, t) => pairs.some(([ph, pa, pt]) => teamMatches(h, ph) >= 1 && teamMatches(a, pa) >= 1 && Math.abs(pt - t) < 4 * 36e5);
     // ESPN's date-range query comes back empty, so ask for each ET day in the window
     const days = [...new Set([0, 12, 24, windowH].map(h => etDate(new Date(+now + h * 36e5).toISOString())))];
     const px = v => { if (v == null) return null; const t = String(v).trim().toUpperCase(); if (t === 'EVEN' || t === 'EV') return 100; const n = parseInt(t.replace('+', ''), 10); return isNaN(n) || Math.abs(n) < 100 ? null : n; };
@@ -724,7 +731,7 @@
         const comp = e.competitions?.[0], t = new Date(e.date) - now;
         if (!comp || comp.status?.type?.state !== 'pre' || t <= 0 || t > windowH * 36e5) continue;
         const h = comp.competitors.find(c => c.homeAway === 'home'), a = comp.competitors.find(c => c.homeAway === 'away'), o = comp.odds?.[0];
-        if (!h || !a || !o || covered(h.team, a.team)) continue;
+        if (!h || !a || !o || covered(h.team, a.team, new Date(e.date))) continue;
         const home = h.team.displayName, away = a.team.displayName, eventId = 'espn' + e.id;
         const base = { type: 'line', espnLine: true, eventId, sport, lg: S.lg, emoji: S.emoji, game: `${away} @ ${home}`, home, away,
           start: new Date(e.date).toISOString(), book: 'DraftKings', src: 'DraftKings no-vig (est.)' };
@@ -785,6 +792,17 @@
       p.vibe = analyzeProp(p, logs, bd, side);
       const ex = await extraNotes(p, bd, { getJSON, get, fairML, af }).catch(() => []);
       if (ex.length) { p.vibe.items.push(...ex); p.vibe.score = scoreOf(p.vibe.items); }
+    });
+    // vibe + extras for every board game line (not just +EV), compact, so every game shows a lean
+    const boardLines = card.board.filter(x => x.type === 'line' && !x.alt && !x.vibe);
+    await mapLimit(boardLines, 6, async x => {
+      const done = lines.find(l => l.id === x.id); if (done?.vibe) { x.vibe = { score: done.vibe.score, items: done.vibe.items.slice(0, 6) }; return; }
+      const bd = await espn.breakdown(x);
+      if (bd) card.games[x.eventId] ||= bd;
+      const v = bd ? analyzeLine(x, bd, fairML) : { score: 0, items: [] };
+      const ex = await extraNotes(x, bd, { getJSON, get, fairML, af }).catch(() => []);
+      v.items.push(...ex); v.score = scoreOf(v.items);
+      x.vibe = { score: v.score, items: v.items.slice(0, 6) };
     });
     for (const g of Object.values(card.games)) for (const t of [g.home, g.away]) t.injuries = t.injuries.slice(0, 14);
 
@@ -1101,6 +1119,13 @@
         (a.stats || []).forEach((v, i) => { if (names[i] && row[names[i]] == null) row[names[i]] = v; if (labels[i] && row[labels[i]] == null) row[labels[i]] = v; });
       }
     }
+    // soccer: summary.rosters[].roster[].stats = [{ name, value }]
+    for (const team of sum?.rosters || []) for (const p of team.roster || []) {
+      const key = normName(p.athlete?.displayName); if (!key || !p.stats?.length) continue;
+      const row = rows[key] ||= { _dnp: true };
+      for (const st of p.stats) if (row[st.name] == null) row[st.name] = String(st.value);
+      row._dnp = !(+row.appearances > 0 || p.starter || p.subbedIn);
+    }
     for (const r of Object.values(rows)) if (r.points == null && r.goals != null && r.assists != null) r.points = String(+r.goals + +r.assists);
     return rows;
   }
@@ -1182,6 +1207,44 @@
     } else out.winning = out.cover > 0;
     return out;
   }
+  // CLV: compare the price we logged to DraftKings' closing line (ESPN summary pickcenter keeps open/close after kickoff).
+  // Same number → CLV% = our decimal × closing no-vig chance − 1. Different number → did the line move our way?
+  async function closingFor(leg, getJSON) {
+    const S = SPORTS[leg.sport];
+    if (leg.type !== 'line' || !S?.espn || !leg.start) return null;
+    const base = `https://site.api.espn.com/apis/site/v2/sports/${S.espn}`;
+    const sb = await getJSON(`${base}/scoreboard?dates=${etDate(leg.start)}${S.q || ''}`);
+    const e = (sb?.events || []).find(ev => { const cs = ev.competitions[0].competitors, h = cs.find(c => c.homeAway === 'home'), a = cs.find(c => c.homeAway === 'away');
+      return h && a && teamMatches(h.team, leg.home) && teamMatches(a.team, leg.away); });
+    if (!e || e.competitions[0].status?.type?.state === 'pre') return null; // not closed yet
+    const pc = (await getJSON(`${base}/summary?event=${e.id}`))?.pickcenter?.[0];
+    if (!pc) return null;
+    const am = v => { const t = String(v ?? '').toUpperCase(); if (t === 'EVEN') return 100; const n = parseInt(t.replace('+', ''), 10); return isNaN(n) ? null : n; };
+    const ln = v => v == null ? null : parseFloat(String(v).replace(/^[ou]/i, ''));
+    const c = side => side?.close || null;
+    const isHome = leg.team && norm(leg.team) === norm(leg.home);
+    let mine, other, point = null;
+    if (leg.market === 'h2h') {
+      if (leg.team === 'Draw') return null;
+      mine = c(pc.moneyline?.[isHome ? 'home' : 'away']); other = c(pc.moneyline?.[isHome ? 'away' : 'home']);
+    } else if (leg.market === 'spreads') {
+      mine = c(pc.pointSpread?.[isHome ? 'home' : 'away']); other = c(pc.pointSpread?.[isHome ? 'away' : 'home']); point = ln(mine?.line);
+    } else {
+      const over = /^over/i.test(leg.pick);
+      mine = c(pc.total?.[over ? 'over' : 'under']); other = c(pc.total?.[over ? 'under' : 'over']); point = ln(mine?.line);
+    }
+    const a1 = am(mine?.odds), a2 = am(other?.odds);
+    if (a1 == null || a2 == null) return null;
+    const closeP = devig([toDec(a1), toDec(a2)])[0];
+    const out = { closeAm: a1, closePoint: point, closeP };
+    if (leg.market === 'h2h' || point === leg.point) { out.clv = leg.dec * closeP - 1; out.beat = out.clv > 0; }
+    else if (point != null) { // number moved: better number for us = beat
+      const better = leg.market === 'spreads' ? leg.point > point : /^over/i.test(leg.pick) ? leg.point < point : leg.point > point;
+      out.beat = better; out.moved = +(leg.point - point).toFixed(1);
+    }
+    return out;
+  }
+
   function parlayResult(legs) {
     const rs = legs.map(l => l.result || 'pending');
     if (rs.includes('lost')) return 'lost';
@@ -1203,12 +1266,17 @@
         if (l.result === 'pending' && now - new Date(l.start) > 4 * 864e5) l.result = 'ungraded';
       }
       if (h.parlay) h.parlay.result = parlayResult(h.parlay.legs);
+      for (const l of [...legs, ...(h.clv || [])]) if (l.type === 'line' && l.close == null && new Date(l.start) < now) {
+        const cl = await closingFor(l, getJSON).catch(() => null);
+        if (cl) l.close = cl; else if (now - new Date(l.start) > 3 * 864e5) l.close = false;
+      }
     }
     const byId = Object.fromEntries([...card.lines, ...card.props].map(x => [x.id, x]));
     const potd = byId[card.potd], par = card.potdParlay;
     if (potd || par) {
       const date = etDate(card.generatedAt);
-      const entry = { date, potd: potd ? snap(potd) : null,
+      const clvLegs = card.lines.filter(x => x.dec && !x.alt && !x.espnLine && x.ev >= 0.01 && x.ev < STALE).slice(0, 25).map(snap);
+      const entry = { date, clv: clvLegs, potd: potd ? snap(potd) : null,
         parlay: par ? { legs: par.legs.map(id => snap(byId[id])), dec: par.dec, p: par.p, ev: par.ev, result: 'pending' } : null };
       const i = history.findIndex(h => h.date === date);
       const started = h => [h.potd, ...(h.parlay?.legs || [])].some(l => l && new Date(l.start) < now);
@@ -1223,7 +1291,7 @@
   const Engine = { SPORTS, PROP_STATS, STALE, PROP_STALE, toDec, toAm, pct, esc, devig, norm, normName,
     legsFromEvents, propsFromEvent, oneSidedFromEvent, altsFromEvent, altPropsFromEvent, ladderModel, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
     parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
-    pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult, liveStatus,
+    pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult, liveStatus, closingFor, boxRows,
     extraNotes, weatherFor, marketsFor, nhlGoalies, nflverse, makeApiFootball, apiFootballNotes };
   root.Engine = Engine;
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;

@@ -176,6 +176,13 @@
   .gcell .edge { font-size: 10px; padding: 1px 5px; align-self: center; margin-top: 2px; }
   .grow .narrow, .gcell .narrow { display: none; }
   @media (max-width: 520px) { .grow .wide, .gcell small .wide { display: none; } .grow .narrow { display: inline; } }
+  .gcell .ghit { font-size: 10px; color: var(--muted); }
+  .gcell.star { box-shadow: inset 0 0 0 2px #ffcc4d; } .gcell.star.lean { box-shadow: inset 0 0 0 2px color-mix(in srgb, #ffcc4d 55%, transparent); }
+  .gstar { position: absolute; top: -7px; right: -5px; font-size: 13px; }
+  .gpick { font-size: 12.5px; background: color-mix(in srgb, #ffcc4d 14%, var(--panel2)); border-radius: 10px; padding: 7px 9px; cursor: pointer; }
+  .gpick.lean { background: var(--panel2); }
+  .gwhy { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+  .good { color: var(--edge); font-weight: 700; } .bad { color: var(--bad); font-weight: 700; }
   .gcell.empty { color: var(--muted); cursor: default; justify-content: center; }
   .seg button span { margin-left: 4px; font-size: 11px; background: var(--chip); border-radius: 999px; padding: 1px 7px; color: var(--muted); }
   .seg button.on { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; border-color: transparent; }
