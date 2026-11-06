@@ -31,6 +31,11 @@
     if (!card) return;
     for (const x of [...card.lines, ...card.props]) byId[x.id] = x;
     for (const x of card.board || []) if (!byId[x.id]) byId[x.id] = x;
+    // Hide games that have already started from every list (slip legs, Pick of the Day and the Live tab
+    // still find them through byId, so live tracking keeps working).
+    const upcoming = x => !x.start || new Date(x.start) > Date.now();
+    card.lines = card.lines.filter(upcoming); card.props = card.props.filter(upcoming);
+    if (card.board) card.board = card.board.filter(upcoming);
     applyPrices();
     S.slip = S.slip.filter(id => byId[id]);
   }
@@ -339,6 +344,8 @@
     }
   }
   setInterval(() => { if (!document.hidden) refreshLive(); }, 45000);
+  // as games kick off, drop them from the lists (every 5 minutes)
+  setInterval(() => { if (!document.hidden && card && S.tab !== 'live') { const y = window.scrollY; index(); render(); window.scrollTo(0, y); } }, 300000);
   setInterval(() => { const el = document.getElementById('liveAgo'); if (el && liveAt) el.textContent = Math.round((Date.now() - liveAt) / 1000) + 's ago'; }, 1000);
 
   function legChip(L) {
