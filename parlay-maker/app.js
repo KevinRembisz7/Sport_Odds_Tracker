@@ -14,7 +14,7 @@
     tab: store.get('tab', 'top'), lg: 'ALL', market: 'ALL', q: '', sort: 'ev',
     slip: store.get('slip', []), bankroll: store.get('bankroll', 500), kfrac: store.get('kfrac', 0.25),
     key: store.get('key', ''), budget: store.get('budget2', 8), allBooks: store.get('allBooks', false),
-    unit: store.get('unit', 0), day: 'ALL', time: 'ALL', team: 'ALL',
+    unit: store.get('unit', 0), day: 'ALL', time: 'ALL', team: 'ALL', glType: store.get('glType', 'ALL'),
     myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), allPlayers: store.get('allPlayers', false), bestOnly: store.get('bestOnly', false), prices: store.get('prices', {}), type: 'ALL', shown: 120,
   };
   const B365 = () => S.myBook === 'bet365';
@@ -32,7 +32,7 @@
     for (const x of [...card.lines, ...card.props]) byId[x.id] = x;
     for (const x of card.board || []) if (!byId[x.id]) byId[x.id] = x;
     applyPrices();
-    S.slip = S.slip.filter(id => byId[id]?.dec);
+    S.slip = S.slip.filter(id => byId[id]);
   }
   // Prices the user typed in from their own book (bet365) override the pulled best price.
   function applyPrices() {
@@ -48,7 +48,6 @@
     const am = parseInt(String(raw).replace(/[^\d+-]/g, ''), 10);
     if (am && Math.abs(am) >= 100) S.prices[id] = am; else delete S.prices[id];
     store.set('prices', S.prices); applyPrices();
-    if (!byId[id]?.dec) S.slip = S.slip.filter(x => x !== id);
     render();
   }
   const priceInput = x => `<input class="pin" inputmode="numeric" data-price="${esc(x.id)}" placeholder="bet365 odds" value="${S.prices[x.id] ? (S.prices[x.id] > 0 ? '+' : '') + S.prices[x.id] : ''}">`;
@@ -432,7 +431,7 @@
         <div class="t"><b>${i === 0 ? '⭐ ' : ''}${esc(propLabel(x))}</b>
           <span class="muted">${x.dec ? `${toAm(x.dec)} ${esc(x.book)}` : `fair ${toAm(1 / x.fairP)} · ${pct(x.fairP, 0)}`}${x.vibe?.hit ? ` · <b class="${x.vibe.hit.l10 >= 0.6 ? 'good' : x.vibe.hit.l10 <= 0.4 ? 'bad' : ''}" style="display:inline">hit ${x.vibe.hit.hits}/${x.vibe.hit.n}</b> · avg ${x.vibe.hit.avg}` : ''}${x.vibe?.score ? ` · vibe ${x.vibe.score > 0 ? '+' : ''}${x.vibe.score}` : ''}${B365() ? ` · bet365 ≥ ${targetAm(x)}` : ''}</span></div>
         ${x.dec && x.ev != null ? `<span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)}</span>` : '<span class="muted">—</span>'}
-        ${x.dec ? `<button class="add ${S.slip.includes(x.id) ? 'in' : ''}" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓' : '+'}</button>` : ''}</div>`).join('')}
+        <button class="add ${S.slip.includes(x.id) ? 'in' : ''}" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓' : '+'}</button></div>`).join('')}
     </article>`;
   }
   const allPlayerProps = () => (card.board || []).filter(x => x.type === 'prop').map(x => byId[x.id] || x)
@@ -516,12 +515,18 @@
       else if (x.market === 'team_totals' && x.side === 'Over') (g.tt ||= []).push(x);
     }
     let list = Object.values(games);
-    for (const g of list) g.best = bestSide([...Object.values(g.ml), ...Object.values(g.sp), ...Object.values(g.tot)]);
+    const TT = g => { const pick = team => (g.tt || []).filter(x => x.team === team).sort((a, b) => Math.abs(a.fairP - 0.5) - Math.abs(b.fairP - 0.5))[0]; return [pick(g.away), pick(g.home)].filter(Boolean); };
+    const sidesOf = g => S.glType === 'spreads' ? Object.values(g.sp) : S.glType === 'h2h' ? Object.values(g.ml) : S.glType === 'totals' ? Object.values(g.tot)
+      : S.glType === 'team_totals' ? TT(g) : [...Object.values(g.ml), ...Object.values(g.sp), ...Object.values(g.tot)];
+    if (S.glType !== 'ALL') list = list.filter(g => sidesOf(g).length);
+    for (const g of list) g.best = bestSide(sidesOf(g));
     const allCount = list.length;
     if (S.bestOnly) list = list.filter(g => g.best && g.best.kind !== 'slight');
     list.sort((a, b) => S.bestOnly ? ((b.best?.kind === 'ev') - (a.best?.kind === 'ev')) || ((b.best?.x.vibe?.score || 0) - (a.best?.x.vibe?.score || 0)) : 0);
     list.sort((a, b) => S.sort === 'sport' ? lgRank(a) - lgRank(b) || a.start.localeCompare(b.start) : a.start.localeCompare(b.start));
-    const toggle = `<div class="seg small"><button class="${S.bestOnly ? '' : 'on'}" data-best="0">🏟️ All games (${allCount})</button><button class="${S.bestOnly ? 'on' : ''}" data-best="1">⭐ Strong plays only</button></div>`;
+    const types = [['ALL', 'All lines'], ['spreads', 'Spread'], ['h2h', 'Moneyline'], ['totals', 'Over/Under'], ['team_totals', 'Team totals']];
+    const toggle = `<div class="seg small"><button class="${S.bestOnly ? '' : 'on'}" data-best="0">🏟️ All games (${allCount})</button><button class="${S.bestOnly ? 'on' : ''}" data-best="1">⭐ Strong plays only</button></div>
+      <div class="seg small">${types.map(([k, l]) => `<button class="${S.glType === k ? 'on' : ''}" data-gltype="${k}">${l}</button>`).join('')}</div>`;
     if (!list.length) return toggle + empty(S.bestOnly ? 'No ⭐ picks right now: no sharp +EV sides and no strong data leans.' : 'No game lines match these filters.');
     const ptxt = p => (p > 0 ? '+' : '') + p;
     const st = (g, x) => g.best && x && g.best.x.id === x.id ? g.best.kind : '';
@@ -531,6 +536,16 @@
       ${gameCell(g.tot[totKey], g.tot[totKey] ? `${totKey === 'o' ? 'O' : 'U'} ${g.tot[totKey].point}` : '', st(g, g.tot[totKey]))}
       ${gameCell(g.ml[team], 'ML', st(g, g.ml[team]))}
     </div>`;
+    // one column for the chosen bet type: each side gets a full-width row
+    const oneType = (g, gd) => {
+      const lbl = { spreads: 'Spread', h2h: 'Moneyline', totals: 'Over/Under', team_totals: 'Team total' }[S.glType];
+      const sides = sidesOf(g), logo = t => t === g.home ? gd?.home.logo : t === g.away ? gd?.away.logo : null;
+      return `<div class="ghead one"><span></span><span>${lbl}</span></div>` + sides.map(x => {
+        const who = S.glType === 'totals' ? (/^over/i.test(x.pick) ? 'Over' : 'Under') : x.team;
+        const label = S.glType === 'spreads' ? ptxt(x.point) : S.glType === 'totals' ? `${/^over/i.test(x.pick) ? 'O' : 'U'} ${x.point}` : S.glType === 'team_totals' ? `o${x.point}` : who === 'Draw' ? 'Draw' : 'ML';
+        return `<div class="grow one"><div class="gteam">${logo(who) ? `<img src="${esc(logo(who))}" alt="" loading="lazy" onerror="this.remove()">` : ''}<span>${esc(who)}</span></div>${gameCell(x, label, st(g, x))}</div>`;
+      }).join('');
+    };
     const card1 = g => {
       const gd = card.games?.[g.id], plus = [...Object.values(g.ml), ...Object.values(g.sp), ...Object.values(g.tot)].filter(x => x.dec && x.ev >= 0.01 && !isSus(x)).length;
       const b = g.best, why = b ? (b.x.vibe?.items || []).filter(i => i.tone === 'g').slice(0, 2) : [];
@@ -539,11 +554,10 @@
         <div class="c-top"><span class="tag">${g.emoji} ${esc(g.lg)}</span><span>${esc(fmtTime(g.start))}</span><span class="spacer"></span>${plus ? `<span class="edge">${plus} +EV</span>` : ''}</div>
         ${b ? `<div class="gpick ${b.kind}" data-open="${esc(b.x.id)}">${b.kind === 'slight' ? '☆ Slight lean' : b.kind === 'ev' ? '⭐ Pick' : '⭐ Lean'}: <b>${esc(b.x.pick.replace(/ \(alt\)$/, ''))}</b> ${b.x.dec ? toAm(b.x.dec) : ''} · ${pct(b.x.fairP, 0)} to hit${b.kind === 'ev' ? ` · <span class="good">${signPct(b.x.ev)}</span>` : ''}${b.x.vibe?.score ? ` · vibe ${b.x.vibe.score > 0 ? '+' : ''}${b.x.vibe.score}` : ''} · ${unitsChip(b.kind === 'ev' ? unitsFor(b.x) : b.kind === 'lean' ? 0.5 : 0.25)}
           ${why.length ? `<div class="gwhy">${why.map(i => i.text).join(' · ')}</div>` : ''}</div>` : ''}
-        <div class="ghead"><span></span><span>Spread</span><span>Total</span><span>ML</span></div>
-        ${row(g, g.away, gd?.away.logo, 'o')}
-        ${row(g, g.home, gd?.home.logo, 'u')}
-        ${g.ml.Draw ? `<div class="grow"><div class="gteam"><span>Draw</span></div><div></div><div></div>${gameCell(g.ml.Draw, 'Draw')}</div>` : ''}
-        ${g.tt?.length ? (() => { // team totals (Kalshi): show the rung closest to a coin flip for each team
+        ${S.glType === 'ALL' ? '<div class="ghead"><span></span><span>Spread</span><span>Total</span><span>ML</span></div>' : ''}
+        ${S.glType === 'ALL' ? row(g, g.away, gd?.away.logo, 'o') + row(g, g.home, gd?.home.logo, 'u') : oneType(g, gd)}
+        ${S.glType === 'ALL' && g.ml.Draw ? `<div class="grow"><div class="gteam"><span>Draw</span></div><div></div><div></div>${gameCell(g.ml.Draw, 'Draw')}</div>` : ''}
+        ${S.glType === 'ALL' && g.tt?.length ? (() => { // team totals (Kalshi): show the rung closest to a coin flip for each team
           const pickTT = team => g.tt.filter(x => x.team === team).sort((a, b) => Math.abs(a.fairP - 0.5) - Math.abs(b.fairP - 0.5))[0];
           const cells = [g.away, g.home].map(pickTT).filter(Boolean);
           return cells.length ? `<div class="gtt">🎯 Team totals · ${cells.map(x => `<span data-open="${esc(x.id)}">${esc(x.team.split(' ').slice(-1)[0])} o${x.point} <b>${pct(x.fairP, 0)}</b>${B365() ? ` · 365 ≥ ${targetAm(x)}` : ''}</span>`).join(' · ')} <span class="muted">(Kalshi)</span></div>` : '';
@@ -617,7 +631,7 @@
       ${rows.map(x => `<tr data-open="${esc(x.id)}"><td><span class="tag">${x.emoji} ${esc(x.lg)}</span></td><td><b>${esc(x.pick)}</b></td><td class="muted">${esc(x.game)}</td>
         <td class="muted">${esc(fmtTime(x.start))}</td><td>${toAm(1 / x.fairP)}</td><td><b style="color:var(--edge)">${targetAm(x)}</b></td><td>${priceInput(x)}</td>
         <td>${x.mine ? `<span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)}</span>` : '<span class="muted">—</span>'}</td>
-        <td>${x.dec ? `<button class="add ${S.slip.includes(x.id) ? 'in' : ''}" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓' : '+'}</button>` : ''}</td></tr>`).join('')}
+        <td><button class="add ${S.slip.includes(x.id) ? 'in' : ''}" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓' : '+'}</button></td></tr>`).join('')}
       </tbody></table></div></div>
       ${items.length > rows.length ? `<div style="text-align:center;margin-top:12px"><button class="btn" id="moreBtn">Show more (${items.length - rows.length} left)</button></div>` : ''}`;
   }
@@ -747,7 +761,7 @@
           ${B365() ? `<div class="b365" style="margin-top:12px"><span>🎯 Bet at bet365 if odds are <b>${targetAm(x)}</b> or better</span>${priceInput(x)}</div>` : ''}
           ${isSus(x) ? '<div class="warnbox">⚠ Edge this big usually means a stale or mistaken line. Check news before betting.</div>' : ''}
           ${priceList ? `<h4 style="margin-top:14px">Best prices</h4><div>${priceList}</div>` : ''}
-          <div style="margin-top:14px">${x.dec ? '' : '<p class="note">Type the bet365 price above to add this to your slip.</p>'}<button class="btn primary" ${x.dec ? '' : 'disabled'} data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓ In slip — remove' : '+ Add to slip'}</button></div>
+          <div style="margin-top:14px">${x.dec ? '' : '<p class="note">No sportsbook price here: it goes in your slip at the fair price. Type your bet365 odds (above or in the slip) for the real edge.</p>'}<button class="btn primary" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓ In slip — remove' : '+ Add to slip'}</button></div>
         </div>
         ${gameBlock}
       </div>`;
@@ -755,7 +769,8 @@
   }
 
   // ---------- slip ----------
-  const slipLegs = () => S.slip.map(id => byId[id]).filter(x => x?.dec);
+  // legs without a sportsbook price use the fair price (0% edge) until you type your bet365 odds in the slip
+  const slipLegs = () => S.slip.map(id => byId[id]).filter(Boolean).map(x => x.dec ? x : { ...x, dec: 1 / x.fairP, ev: 0, book: 'fair price', fairOnly: true });
   function toggleSlip(id) {
     S.slip = S.slip.includes(id) ? S.slip.filter(x => x !== id) : [...S.slip, id];
     store.set('slip', S.slip); render();
@@ -773,7 +788,7 @@
     const ls = slipLegs(), s = ls.length ? E.parlayStats(ls, S.kfrac) : null;
     const same = new Set(ls.map(l => l.eventId)).size < ls.length, reds = ls.filter(l => l.vibe?.score <= -2);
     openDrawer('🧾 Your slip', ls.length ? `
-      ${ls.map(l => { const t = titleOf(l); return `<div class="slipleg">${avatar(l)}<div class="t"><b>${esc(t.n)}</b>${esc(t.p)} · ${esc(l.book)} <span class="edge" style="font-size:11px">${signPct(l.ev)}</span></div><b>${toAm(l.dec)}</b><button class="x" data-add="${esc(l.id)}" title="Remove">✕</button></div>`; }).join('')}
+      ${ls.map(l => { const t = titleOf(l); return `<div class="slipleg">${avatar(l)}<div class="t"><b>${esc(t.n)}</b>${esc(t.p)} · ${esc(l.book)} ${l.fairOnly ? '<span class="muted" style="font-size:11px">type your odds →</span>' : `<span class="edge" style="font-size:11px">${signPct(l.ev)}</span>`}</div>${l.fairOnly ? priceInput(l) : `<b>${toAm(l.dec)}</b>`}<button class="x" data-add="${esc(l.id)}" title="Remove">✕</button></div>`; }).join('')}
       <div class="pstats"><div><small>Odds</small><b>${toAm(s.dec)}</b></div><div><small>Hit</small><b>${pct(s.p)}</b></div><div><small>EV</small><b style="color:${s.ev >= 0 ? 'var(--edge)' : 'var(--bad)'}">${signPct(s.ev)}</b></div><div><small>Units</small><b>${unitsTxt(ls.length > 1 ? unitsParlay(ls) : unitsFor(ls[0]), true)}</b><small style="text-transform:none;letter-spacing:0">$${((ls.length > 1 ? unitsParlay(ls) : unitsFor(ls[0]) || 0) * unitSize()).toFixed(2)}</small></div></div>
       <div class="meter"><span>True</span><div class="track"><i style="width:${Math.min(100, s.p * 100)}%;background:var(--edge)"></i></div><b>${pct(s.p, 0)}</b></div>
       <div class="meter"><span>Book</span><div class="track"><i style="width:${Math.min(100, s.implied * 100)}%;background:var(--muted)"></i></div><b>${pct(s.implied, 0)}</b></div>
@@ -827,7 +842,7 @@
     if (e.target.closest('input.pin')) return;
     if (e.target.id === 'moreBtn') { S.shown += 150; render(); return; }
     if (e.target.id === 'liveNow') { refreshLive(true); return; }
-    const el = e.target.closest('[data-add],[data-open],[data-tab],[data-section],[data-allp],[data-best],[data-lg],[data-mk],[data-close],[data-loadparlay],#overlay,#slipbar,#liveBtn,#setBtn,#saveSet,#dropLive,#clearSlip,#buildBtn');
+    const el = e.target.closest('[data-add],[data-open],[data-tab],[data-section],[data-allp],[data-best],[data-gltype],[data-lg],[data-mk],[data-close],[data-loadparlay],#overlay,#slipbar,#liveBtn,#setBtn,#saveSet,#dropLive,#clearSlip,#buildBtn');
     if (!el) return;
     if (el.dataset.add) { e.stopPropagation(); toggleSlip(el.dataset.add); return; }
     if (el.dataset.open) { openDetail(el.dataset.open); return; }
@@ -835,6 +850,7 @@
     if (el.dataset.tab) { e.preventDefault(); window.scrollTo({ top: 0 }); S.tab = el.dataset.tab; store.set('tab', S.tab); S.market = 'ALL'; render(); return; }
     if (el.dataset.lg) { S.lg = el.dataset.lg; S.market = 'ALL'; S.team = 'ALL'; render(); return; }
     if (el.dataset.mk) { S.market = el.dataset.mk; render(); return; }
+    if (el.dataset.gltype) { S.glType = el.dataset.gltype; store.set('glType', S.glType); render(); return; }
     if (el.dataset.best) { S.bestOnly = el.dataset.best === '1'; store.set('bestOnly', S.bestOnly); render(); return; }
     if (el.dataset.allp) { S.allPlayers = el.dataset.allp === '1'; store.set('allPlayers', S.allPlayers); S.shown = 120; render(); return; }
     if (el.dataset.section) { S.section = el.dataset.section; store.set('section', S.section); render(); return; }
@@ -873,7 +889,7 @@
     if (e.target.id === 'fDay') { S.day = e.target.value; S.time = 'ALL'; S.shown = 120; render(); }
     if (e.target.id === 'fTime') { S.time = e.target.value; S.shown = 120; render(); }
     if (e.target.id === 'fTeam') { S.team = e.target.value; S.shown = 120; render(); }
-    if (e.target.dataset?.price) { const id = e.target.dataset.price, open = $('modal').classList.contains('show'); setPrice(id, e.target.value); if (open) openDetail(id); }
+    if (e.target.dataset?.price) { const id = e.target.dataset.price, open = $('modal').classList.contains('show'), slipOpen = $('drawer').classList.contains('show') && $('drawerTitle').textContent.includes('slip'); setPrice(id, e.target.value); if (open) openDetail(id); if (slipOpen) openSlip(); }
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
 
