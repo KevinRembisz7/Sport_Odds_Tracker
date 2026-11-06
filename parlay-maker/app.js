@@ -814,16 +814,19 @@
       <label>Bankroll ($) <input id="sBank" type="number" value="${esc(S.bankroll)}"></label>
       <label>Unit size ($) <input id="sUnit" type="number" min="0" step="0.5" value="${S.unit > 0 ? esc(S.unit) : ''}" placeholder="auto: 1% of bankroll ($${Math.max(1, S.bankroll / 100).toFixed(2)})"></label>
       <label>Kelly fraction <select id="sKelly">${[[0.1, '1/10'], [0.25, '1/4'], [0.5, '1/2']].map(([v, l]) => `<option value="${v}" ${S.kfrac === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label>If the daily card is from yesterday <select id="sAuto"><option value="1">Rebuild it automatically when I open the site</option><option value="0">Don't (I'll hit ↻ Live refresh)</option></select></label>
       <label>Theme <select id="sTheme"><option value="">Match system</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
       <button class="btn primary" id="saveSet">Save</button>
       ${store.get('liveCard', null) ? '<button class="btn" id="dropLive">Go back to the daily card</button>' : ''}
       <p class="note">Your key is stored only in this browser.</p></div>`);
     $('sTheme').value = store.get('theme', '');
     $('sMyBook').value = S.myBook;
+    $('sAuto').value = store.get('autoRefresh', true) ? '1' : '0';
   }
   async function liveRefresh() {
     if (!S.key) { openSettings(); return; }
-    openDrawer('↻ Live refresh', `<p class="note">Pulling fresh lines + props for games in the next 30h (max ${S.budget} credits; change it in ⚙️ Settings)…</p><div class="log" id="log"></div>`);
+    const stale = card && new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(card.generatedAt)) !== new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+    openDrawer('↻ Live refresh', `${stale ? '<div class="howto">📅 The saved card was from a previous day (GitHub\u2019s daily job didn\u2019t run yet), so this browser is building today\u2019s card.</div>' : ''}<p class="note">Pulling fresh lines + props for games in the next 30h (max ${S.budget} credits; change it in ⚙️ Settings)…</p><div class="log" id="log"></div>`);
     const log = m => { const el = $('log'); if (el) { el.textContent += m + '\n'; el.scrollTop = 1e9; } };
     const get = async url => { const r = await fetch(url); if (!r.ok) throw new Error(r.status + ''); return { json: /\.csv(\?|$)/.test(url) ? await r.text() : await r.json(), headers: n => r.headers.get(n) }; };
     try {
@@ -866,7 +869,7 @@
         S.key = $('sKey').value.trim(); S.budget = Math.max(3, +$('sBudget').value || 8); S.allBooks = $('sBooks').value === '1';
         S.bankroll = +$('sBank').value || 500; S.kfrac = +$('sKelly').value; S.myBook = $('sMyBook').value; S.unit = Math.max(0, +$('sUnit').value || 0); store.set('unit', S.unit);
         ['key', 'allBooks', 'bankroll', 'kfrac', 'myBook'].forEach(k => store.set(k, S[k])); store.set('budget2', S.budget);
-        store.set('theme', $('sTheme').value); applyTheme();
+        store.set('theme', $('sTheme').value); applyTheme(); store.set('autoRefresh', $('sAuto').value === '1');
         if (card) { E.applyBooks([...card.lines, ...card.props], S.allBooks); Object.values(byId).forEach(x => delete x._orig); applyPrices(); }
         closeAll(); render(); break;
       case 'buildBtn': {
@@ -894,4 +897,10 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
 
   applyTheme(); index(); render(); refreshLive(true);
+  // Self-heal: if GitHub's scheduler skipped today's build, rebuild in this browser with the saved key (once a day).
+  const etDay = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(d));
+  if (card && S.key && store.get('autoRefresh', true) && etDay(card.generatedAt) !== etDay(Date.now()) && store.get('autoDay', '') !== etDay(Date.now())) {
+    store.set('autoDay', etDay(Date.now()));
+    liveRefresh();
+  }
 })();

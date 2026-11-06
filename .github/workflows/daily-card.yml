@@ -3,10 +3,16 @@ name: Daily Edge Card
 on:
   # GitHub sometimes delays or skips scheduled runs, so there are backups. A backup that finds today's card
   # already built only does the free refresh (grading, ESPN lines, vibes) and spends no Odds API credits.
+  # Tries every ~2 hours, 7 AM to 7 PM Eastern. The first run that lands each day builds the card (spends
+  # credits); every later one only does the free refresh (grading, Kalshi, ESPN lines, vibes).
   schedule:
-    - cron: '23 13 * * *'   # 8:23 AM Eastern (13:23 UTC): main run
-    - cron: '47 15 * * *'   # 10:47 AM Eastern backup
-    - cron: '11 19 * * *'   # 2:11 PM Eastern backup
+    - cron: '37 11 * * *'   # 7:37 AM ET
+    - cron: '23 13 * * *'   # 9:23 AM ET
+    - cron: '47 15 * * *'   # 11:47 AM ET
+    - cron: '11 17 * * *'   # 1:11 PM ET
+    - cron: '29 19 * * *'   # 3:29 PM ET
+    - cron: '53 21 * * *'   # 5:53 PM ET
+    - cron: '17 23 * * *'   # 7:17 PM ET
   workflow_dispatch:
     inputs:
       budget:
