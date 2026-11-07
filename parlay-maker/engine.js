@@ -725,8 +725,7 @@
 
     applyBooks(lines, allowAll); applyBooks(props, allowAll);
     // Full fair-odds board (every line + prop, +EV or not) for people pricing a book we can't pull, e.g. bet365.
-    const keep = ['id', 'type', 'eventId', 'sport', 'lg', 'emoji', 'game', 'home', 'away', 'team', 'market', 'point', 'pick',
-      'player', 'side', 'statLabel', 'fairP', 'src', 'start', 'alt', 'oneSided', 'dec', 'book', 'ev'];
+    const keep = BOARD_KEEP;
     card.board = [...lines, ...props].map(x => Object.fromEntries(keep.filter(k => x[k] != null).map(k => [k, x[k]])));
     lines = lines.filter(l => l.dec && l.ev >= 0.005).sort((a, b) => b.ev - a.ev).slice(0, maxLines);
     props = props.filter(p => p.dec && p.ev >= (p.minEdge ?? 0.01)).sort((a, b) => b.ev - a.ev).slice(0, maxProps);
@@ -783,6 +782,59 @@
   }
 
   // ESPN matchup + player analysis and prebuilt parlays. Free (no odds credits), so it can be re-run on a saved card.
+  const BOARD_KEEP = ['id', 'type', 'eventId', 'sport', 'lg', 'emoji', 'game', 'home', 'away', 'team', 'market', 'point', 'pick',
+    'player', 'side', 'statLabel', 'fairP', 'src', 'start', 'alt', 'oneSided', 'dec', 'book', 'ev'];
+
+  // Evening top-up: the morning build spends the day's budget soonest-game-first, so late tips (10 PM ET NBA, West
+  // Coast NHL) often end up with no sportsbook props. This buys props only for games starting in the next few hours
+  // that have none yet, merges them into the saved card and re-runs the free analysis.
+  async function topUpProps(card, opts) {
+    const { get, key, log = () => {}, windowH = 7, allowAll = false } = opts;
+    const odds = q => get(`https://api.the-odds-api.com/v4${q}${q.includes('?') ? '&' : '?'}apiKey=${encodeURIComponent(key)}`);
+    let left = null, used = 0;
+    const track = h => { const l = parseInt(h('x-requests-remaining')); if (!isNaN(l)) left = l; used += parseInt(h('x-requests-last')) || 0; };
+    const now = new Date();
+    const covered = new Set((card.board || []).filter(x => x.type === 'prop' && x.dec).map(x => x.eventId));
+    const queues = {};
+    for (const s of Object.keys(SPORTS).filter(k => SPORTS[k].props && !SPORTS[k].espnOnly).sort((a, b) => SPORTS[a].pri - SPORTS[b].pri)) {
+      try {
+        const r = await odds(`/sports/${s}/events`); track(r.headers);
+        const q = (r.json || []).filter(e => { const t = new Date(e.commence_time) - now; return t > 20 * 6e4 && t < windowH * 36e5 && !covered.has(e.id); })
+          .sort((a, b) => b.commence_time.localeCompare(a.commence_time)).map(e => ({ ...e, sport: s })); // latest tip first: those are the ones the morning skipped
+        if (q.length) queues[s] = q;
+      } catch (e) {}
+    }
+    const daysLeft = Math.max(1, Math.ceil((Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1) - now) / 864e5));
+    const reserve = Math.min(40, Math.floor((left ?? 0) * 0.08));
+    const B = opts.budget != null ? +opts.budget : Math.max(0, Math.min(Math.floor(((left ?? 0) - reserve) / daysLeft * 0.5), (left ?? 0) - reserve));
+    log(`top-up: ${Object.values(queues).flat().length} games in the next ${windowH}h without props, budget ${B} (credits left ${left})`);
+    const props = [];
+    for (let fetched = true; fetched;) {
+      fetched = false;
+      for (const s of Object.keys(queues)) {
+        const e = queues[s].shift(); if (!e) continue;
+        const mk = SPORTS[s].props.slice(0, Math.min(3, Math.max(0, B - used)));
+        if (mk.length < 2) continue;
+        try {
+          const r = await odds(`/sports/${s}/events/${e.id}/odds?bookmakers=${BOOKS}&markets=${mk.join(',')}&oddsFormat=american`); track(r.headers);
+          props.push(...propsFromEvent(r.json, s), ...(SPORTS[s].oneSided ? oneSidedFromEvent(r.json, s) : []));
+          log(`top-up props: ${e.away_team} @ ${e.home_team} (${mk.length} credits)`);
+          fetched = true;
+        } catch (err) { log(`top-up ${e.id} failed: ${err.message}`); }
+      }
+    }
+    if (!props.length) { log('top-up: nothing to add'); return { card, used, left, added: 0 }; }
+    applyBooks(props, allowAll);
+    card.board.push(...props.map(x => Object.fromEntries(BOARD_KEEP.filter(k => x[k] != null).map(k => [k, x[k]]))));
+    card.props.push(...props.filter(p => p.dec && p.ev >= (p.minEdge ?? 0.01)));
+    card.props.sort((a, b) => b.ev - a.ev);
+    card.credits = { left, used: (card.credits?.used || 0) + used };
+    card.toppedUpAt = now.toISOString();
+    await analyzeCard(card, get, log, { apiFootballKey: opts.apiFootballKey });
+    log(`top-up done: ${props.length} prop sides for ${new Set(props.map(p => p.eventId)).size} games, ${used} credits, ${left} left`);
+    return { card, used, left, added: props.length };
+  }
+
   async function analyzeCard(card, get, log = () => {}, opts = {}) {
     const af = makeApiFootball(opts.apiFootballKey, get);
     // drop anything that has already started (matters when re-running on a saved card)
@@ -1464,7 +1516,7 @@
     legsFromEvents, propsFromEvent, oneSidedFromEvent, altsFromEvent, altPropsFromEvent, ladderModel, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
     parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
     pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult, liveStatus, closingFor, boxRows,
-    extraNotes, weatherFor, marketsFor, nhlGoalies, nflverse, makeApiFootball, apiFootballNotes, kalshiProps, kalshiNote };
+    extraNotes, weatherFor, marketsFor, nhlGoalies, nflverse, makeApiFootball, apiFootballNotes, kalshiProps, kalshiNote, topUpProps };
   root.Engine = Engine;
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

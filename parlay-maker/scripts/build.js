@@ -32,9 +32,24 @@ const get = async (url, extraHeaders = {}) => {
     global.window = {}; require(file);
     const et = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(d));
     if (window.EDGE_CARD && et(window.EDGE_CARD.generatedAt) === et(Date.now())) {
-      console.log('· today\'s card already built — free refresh only (no Odds API credits)');
-      args.push('--reanalyze');
+      const etHour = +new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' }).format(new Date());
+      if (key && etHour >= 17 && !(window.EDGE_CARD.toppedUpAt && et(window.EDGE_CARD.toppedUpAt) === et(Date.now()))) {
+        console.log('· evening run — topping up props for the late games the morning budget missed');
+        args.push('--top-up');
+      } else {
+        console.log('· today\'s card already built — free refresh only (no Odds API credits)');
+        args.push('--reanalyze');
+      }
     }
+  }
+  if (args.includes('--top-up')) {
+    // props for late games that have none yet (a few credits), then the free re-analysis
+    global.window = {}; delete require.cache[require.resolve(file)]; require(file);
+    const { card } = await Engine.topUpProps(window.EDGE_CARD, { get, key, log: m => console.log('·', m), apiFootballKey: process.env.API_FOOTBALL_KEY,
+      budget: args.includes('--budget') ? opt('--budget', null) : undefined });
+    fs.writeFileSync(file, 'window.EDGE_CARD = ' + JSON.stringify(card) + ';\n');
+    await saveHistory(card);
+    return console.log('topped up data/latest.js');
   }
   if (args.includes('--reanalyze')) {
     // re-run the free ESPN analysis on the saved card without spending odds credits

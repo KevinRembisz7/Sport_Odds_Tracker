@@ -40,6 +40,7 @@ Daily +EV sports picks, **player props** and parlays. Every price is checked aga
 | **Weekday weighting** | Sun ×1.4 (NFL) · Sat ×1.4 (college football) · Thu ×1.0 · Fri ×0.9 · Mon/Wed ×0.8 · Tue ×0.7. It averages out to the pace. |
 | **Reserve** | About 8% (max 40) is held back for your manual ↻ Live refreshes, so the daily build never takes the last credits. |
 | **Props fit the budget** | If a game's full prop menu doesn't fit, it buys the most popular markets first (points, rebounds, assists…). |
+| **Evening top-up for late games** | The first run after 5 PM ET buys props (2–3 credits per game, about half a day's pace in total) only for games tipping in the next 7 hours that have none yet. Latest tips go first, so 10 PM ET NBA and West Coast NHL games get covered. It runs once per day. |
 | **Leftovers** | Any credits left after props go to lines for the next sports with games. |
 
 | Cost | |
