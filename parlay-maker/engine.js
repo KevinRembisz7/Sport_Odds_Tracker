@@ -39,7 +39,7 @@
   // Pinnacle + 9 US books = one "region" worth of credits on The Odds API.
   const BOOKS = 'pinnacle,draftkings,fanduel,betmgm,williamhill_us,espnbet,betrivers,fanatics,betonlineag,bovada';
   // Books in our pull that are licensed in Canada (Ontario / AGCO): FanDuel, DraftKings, BetMGM, Caesars, BetRivers,
-  // theScore Bet (the Odds API's 'espnbet' key) and Pinnacle. Bet99, Sports Interaction, PROLINE+ etc. aren't in the API:
+  // theScore Bet (the Odds API's 'espnbet' key) and Pinnacle. PROLINE+, NorthStar etc. aren't in the API:
   // those work like bet365 mode (fair odds + a target, you type the price).
   const CA_BOOKS = /^(fanduel|draftkings|betmgm|williamhill_us|betrivers|espnbet|pinnacle)$/;
   const US_BOOKS = /^(draftkings|fanduel|betmgm|williamhill_us|espnbet|betrivers|fanatics|ballybet|hardrockbet|betonlineag|bovada|mybookieag|lowvig|betus|betparx|fliff|rebet|betanysports)/;

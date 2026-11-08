@@ -19,10 +19,11 @@
   };
   // "My sportsbook": any book you type prices in from (bet365 and the Canadian books The Odds API doesn't carry),
   // or 'best' = the best pulled price in your region (US / Canada / all)
-  const TYPE_IN = ['bet365', 'Bet99', 'Sports Interaction', 'PROLINE+', 'NorthStar Bets', 'TonyBet', 'PowerPlay', 'Betway', 'Betano', 'LeoVegas', '888sport', 'bwin', 'Mise-o-jeu+', 'Casumo'];
+  const TYPE_IN = ['bet365', 'PROLINE+', 'NorthStar Bets', 'TonyBet', 'PowerPlay', 'Betway', 'Betano', 'LeoVegas', '888sport', 'bwin', 'Mise-o-jeu+', 'Casumo'];
+  if (S.myBook !== 'best' && !TYPE_IN.includes(S.myBook)) S.myBook = 'bet365'; // dropped books fall back to bet365
   const B365 = () => S.myBook !== 'best';
   const MYB = () => B365() ? (S.myBook || 'bet365') : 'best price';
-  const SB = () => ({ 'Sports Interaction': 'SIA', 'NorthStar Bets': 'NorthStar', 'Mise-o-jeu+': 'MOJ+', bet365: '365' })[MYB()] || MYB();
+  const SB = () => ({ 'NorthStar Bets': 'NorthStar', 'Mise-o-jeu+': 'MOJ+', bet365: '365' })[MYB()] || MYB();
   const bookMode = () => S.region === 'all' ? true : S.region === 'ca' ? 'ca' : false;
   const EDGE_BUFFER = 0.02; // target price = break-even + 2% EV
   let byId = {};
@@ -64,7 +65,7 @@
     const keep = x => x.dec && x.ev >= (x.minEdge ?? 0.005);
     card.lines = card.lines.filter(keep); card.props = card.props.filter(keep);
   }
-  // Prices the user typed in from their own book (bet365, Bet99, …) override the pulled best price.
+  // Prices the user typed in from their own book (bet365, PROLINE+, …) override the pulled best price.
   function applyPrices() {
     for (const x of Object.values(byId)) {
       if (!x._orig) x._orig = { dec: x.dec, book: x.book, ev: x.ev };
@@ -1003,7 +1004,7 @@
           <div class="track" style="margin-top:8px;height:8px"><i style="width:${Math.min(100, used / 5)}%;background:var(--edge)"></i></div></div>`; })() : ''}
       ${card?.creditPlan ? `<div class="howto">🪙 <b>${card.creditPlan.left}</b> credits left · <b>${card.creditPlan.daysLeft}</b> days to go · daily pace <b>~${card.creditPlan.perDay}</b> · reserve for your refreshes <b>${card.creditPlan.reserve}</b>. The daily build spends more on big Saturdays and Sundays and less early in the week.</div>` : ''}
       <label>Where I bet <select id="sBooks"><option value="ca">🇨🇦 Canadian books (default)</option><option value="us" ${S.region === 'us' ? 'selected' : ''}>🇺🇸 US books</option><option value="all" ${S.region === 'all' ? 'selected' : ''}>🌍 All books</option></select></label>
-      <p class="note" style="margin:-4px 0 4px">🇨🇦 Canadian books = the best price at FanDuel, DraftKings, BetMGM, Caesars, BetRivers, theScore Bet or Pinnacle (no offshore books). Use Bet99, Sports Interaction, PROLINE+ and the rest? Pick it under My sportsbook: you get fair odds and a target price, and you type in their price.</p>
+      <p class="note" style="margin:-4px 0 4px">🇨🇦 Canadian books = the best price at FanDuel, DraftKings, BetMGM, Caesars, BetRivers, theScore Bet or Pinnacle (no offshore books). Use PROLINE+, NorthStar or another book that isn't listed? Pick it under My sportsbook: you get fair odds and a target price, and you type in their price.</p>
       <label>My sportsbook <select id="sMyBook"><option value="best">Best price at the books above (auto)</option>
         <optgroup label="I type in the price (books the odds feed doesn't carry)">${TYPE_IN.map(b => `<option value="${esc(b)}">${esc(b)}${b === 'bet365' ? '' : ' 🇨🇦'}</option>`).join('')}</optgroup></select></label>
       <label>Bankroll ($) <input id="sBank" type="number" value="${esc(S.bankroll)}"></label>
