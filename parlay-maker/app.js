@@ -15,7 +15,7 @@
     slip: store.get('slip', []), bankroll: store.get('bankroll', 500), kfrac: store.get('kfrac', 0.25),
     key: store.get('key', ''), budget: store.get('budget2', 8), allBooks: store.get('allBooks', false),
     unit: store.get('unit', 0), day: 'ALL', time: 'ALL', team: 'ALL', glType: store.get('glType', 'ALL'),
-    myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), allPlayers: store.get('allPlayers', false), bestOnly: store.get('bestOnly', false), prices: store.get('prices', {}), type: 'ALL', shown: 120,
+    myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), allPlayers: store.get('allPlayers', false), newsSec: store.get('newsSec', 'lineups'), injOnly: false, bestOnly: store.get('bestOnly', false), prices: store.get('prices', {}), type: 'ALL', shown: 120,
   };
   const B365 = () => S.myBook === 'bet365';
   const EDGE_BUFFER = 0.02; // target price = break-even + 2% EV
@@ -137,7 +137,7 @@
   }
 
   // ---------- views ----------
-  const TABS = [['top', '🔥 Top Picks'], ['live', '🔴 Live'], ['money', '💰 Money Builder'], ['board', '🗂️ Bet Board'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['alts', '🪜 Alt Lines'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['record', '📈 Record'], ['how', '📘 How it works']];
+  const TABS = [['top', '🔥 Top Picks'], ['live', '🔴 Live'], ['money', '💰 Money Builder'], ['board', '🗂️ Bet Board'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['alts', '🪜 Alt Lines'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['news', '📰 News'], ['record', '📈 Record'], ['how', '📘 How it works']];
   function renderTabs() {
     $('tabs').innerHTML = TABS.map(([k, l]) => [k, k === 'sheet' && B365() ? '📋 bet365 Sheet' : l]).map(([k, l]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
   }
@@ -669,6 +669,69 @@
       </div>
       <div class="pgrid" id="builtOut">${built || ''}</div>`;
   }
+  // ---------- 📰 News: headlines + expected lineups / injuries, filtered by sport (chips), day, time, team ----------
+  const NEWS = () => card.news || window.EDGE_CARD?.news || {};
+  const LINEUPS = () => card.lineups || window.EDGE_CARD?.lineups || {};
+  function newsGames() {
+    const G = { ...(window.EDGE_CARD?.games || {}), ...(card.games || {}) };
+    // the same game can sit under two ids (odds feed + ESPN): keep the one with lineups / the most props
+    const nProps = id => (card.board || []).filter(x => x.type === 'prop' && x.eventId === id).length;
+    const best = {};
+    for (const [id, g] of Object.entries(G)) {
+      if (!g.lg || !g.start || new Date(g.start) <= Date.now()) continue;
+      const k = g.espnId || id, sc = (LINEUPS()[id] ? 1e4 : 0) + nProps(id), cur = best[k];
+      if (!cur || sc > cur.sc) best[k] = { id, g, sc };
+    }
+    return Object.values(best).map(({ id, g }) => ({ id, g, lg: g.lg, start: g.start, home: g.home.name, away: g.away.name, pick: '', game: `${g.away.name} @ ${g.home.name}` }));
+  }
+  function newsItems() { return [...newsGames(), ...Object.keys(NEWS()).map(lg => ({ lg, pick: '', game: '' }))]; }
+  const ago = iso => { const m = Math.max(0, (Date.now() - new Date(iso)) / 6e4); return m < 60 ? `${Math.round(m)}m ago` : m < 1440 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`; };
+  const stTone = st => /^out|injured reserve|suspen/i.test(st || '') ? 'out' : /doubt/i.test(st || '') ? 'doubt' : st ? 'q' : '';
+  function lineupSide(t, L, gid) {
+    if (!L) return `<div class="lu"><div class="luh">${t.logo ? `<img src="${esc(t.logo)}" alt="" loading="lazy" onerror="this.remove()">` : ''}<b>${esc(t.abbr || t.name)}</b></div><p class="muted" style="font-size:12px">No lineup yet</p></div>`;
+    const badge = L.status === 'confirmed' ? '<span class="lub ok">✅ Confirmed</span>' : `<span class="lub">🔮 Projected${L.from ? ` · last game ${new Date(L.from).toLocaleDateString([], { month: 'short', day: 'numeric' })}` : ''}</span>`;
+    return `<div class="lu"><div class="luh">${t.logo ? `<img src="${esc(t.logo)}" alt="" loading="lazy" onerror="this.remove()">` : ''}<b>${esc(t.abbr || t.name)}</b>${L.formation ? `<span class="muted">${esc(L.formation)}</span>` : ''}${badge}</div>
+      <ul>${L.players.map(p => `<li class="${stTone(p.st)}"><span class="pos">${esc(p.pos)}</span><span class="n">${esc(p.n)}</span>${p.st ? `<span class="st">${esc(p.st)}${p.why ? ' · ' + esc(p.why) : ''}</span>` : ''}</li>`).join('')}</ul></div>`;
+  }
+  function injuryBlock(t) {
+    const key = (t.injuries || []).filter(p => stTone(p.status));
+    if (!key.length) return `<span class="muted">✅ ${esc(t.abbr)}: nothing on the injury report</span>`;
+    return `<div class="injrow"><b>${esc(t.abbr)}</b>${key.slice(0, 10).map(p => `<span class="inj ${stTone(p.status)}" title="${esc(p.type)}">${esc(p.name)}${p.pos ? ` <small>${esc(p.pos)}</small>` : ''} · ${esc(p.status)}</span>`).join('')}</div>`;
+  }
+  function gameNewsCard({ id, g }) {
+    const L = LINEUPS()[id] || {};
+    const outStarters = ['home', 'away'].flatMap(s => (L[s]?.players || []).filter(p => /out|doubt|injured reserve|suspen/i.test(p.st || '')).map(p => ({ ...p, team: g[s] })));
+    const props = (card.board || []).filter(x => x.type === 'prop' && x.eventId === id).length;
+    return `<div class="card ncard">
+      <div class="c-top"><span class="tag">${esc(g.lg)}</span><span>${esc(fmtTime(g.start))}</span><span class="spacer"></span>${props ? `<button class="btn small" data-newsteam="${esc(g.home.name)}">🎯 ${props} props →</button>` : ''}</div>
+      <h3 style="margin:0">${esc(g.away.name)} @ ${esc(g.home.name)}</h3>
+      ${outStarters.length ? `<div class="impact">⚠️ <b>Lineup change:</b> ${outStarters.map(p => `${esc(p.n)} (${esc(p.team.abbr)}, ${esc(p.st)})`).join(', ')} started last game but ${outStarters.length > 1 ? 'are' : 'is'} on the report. Teammates pick up minutes and usage, so check their props and the team total. Lines can be slow to move.</div>` : ''}
+      ${L.goalies ? `<div class="goalies">🥅 Likely goalies: ${['away', 'home'].map(s => L.goalies[s] ? `<b>${esc(L.goalies[s].n)}</b> <span class="muted">${esc(g[s].abbr)} · ${L.goalies[s].sv?.toFixed(3).replace(/^0/, '')} SV%</span>` : `<span class="muted">${esc(g[s].abbr)} TBD</span>`).join(' vs ')}</div>` : ''}
+      ${L.home || L.away ? `<div class="lus">${lineupSide(g.away, L.away, id)}${lineupSide(g.home, L.home, id)}</div>` : ''}
+      <div class="injs">🚑 ${injuryBlock(g.away)}${injuryBlock(g.home)}</div>
+    </div>`;
+  }
+  function viewNews() {
+    const sec = S.newsSec;
+    const seg = `<div class="seg"><button class="${sec === 'lineups' ? 'on' : ''}" data-newssec="lineups">📋 Lineups & injuries</button><button class="${sec === 'headlines' ? 'on' : ''}" data-newssec="headlines">📰 Headlines</button></div>`;
+    const stamp = card.newsAt || window.EDGE_CARD?.newsAt;
+    const head = `<div class="sec"><h2>📰 Daily News</h2><span>${S.lg === 'ALL' ? 'every sport' : esc(S.lg)} · updated ${stamp ? ago(stamp) : 'with the daily card'} · tap a sport above to filter</span></div>
+      <div class="howto">💡 <b>How to use it:</b> if a starter is ruled out after the lines open, the book may not have adjusted yet. Bet his teammates' overs (more shots and minutes) or the opponent before the price moves. The ⚠️ boxes flag those spots.</div>`;
+    if (sec === 'headlines') {
+      const q = E.norm(S.q);
+      let arts = Object.entries(NEWS()).filter(([lg]) => S.lg === 'ALL' || lg === S.lg).flatMap(([lg, a]) => a.map(x => ({ ...x, lg })));
+      if (S.team !== 'ALL') arts = arts.filter(a => a.tags?.includes(S.team) || a.h.includes(S.team.split(' ').slice(-1)[0]));
+      if (q) arts = arts.filter(a => E.norm(a.h + ' ' + a.d).includes(q));
+      if (S.injOnly) arts = arts.filter(a => a.inj);
+      arts.sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+      return head + seg + `<div class="seg small"><button class="${S.injOnly ? '' : 'on'}" data-injonly="0">All stories</button><button class="${S.injOnly ? 'on' : ''}" data-injonly="1">🚑 Injury news only</button></div>
+        ${arts.length ? `<div class="nlist">${arts.map(a => `<a class="nitem" href="${esc(a.url)}" target="_blank" rel="noopener">${a.img ? `<img src="${esc(a.img)}" alt="" loading="lazy" onerror="this.remove()">` : ''}<div><div class="nmeta"><span class="tag">${esc(a.lg)}</span>${a.inj ? '<span class="tag injtag">🚑 Injury</span>' : ''}<span class="muted">${a.at ? ago(a.at) : ''}</span></div><b>${esc(a.h)}</b><p>${esc(a.d)}</p></div></a>`).join('')}</div>`
+        : empty('No headlines for this filter yet. News is pulled for every sport on the card each time the card refreshes.')}`;
+    }
+    const games = filtered(newsGames()).sort((a, b) => a.start.localeCompare(b.start));
+    return head + seg + (games.length ? `<div class="ngrid">${games.map(gameNewsCard).join('')}</div>`
+      : empty('No upcoming games for this filter.'));
+  }
   function viewHow() {
     return `<div class="sec"><h2>How the edge works</h2></div>
       <div class="flow">
@@ -722,8 +785,8 @@
         <p>The daily GitHub Action writes <code>data/latest.js</code>. Or open ⚙️ Settings, paste your Odds API key and hit ↻ Live refresh.</p>`);
       return;
     }
-    const v = { top: viewTop, alts: viewAlts, board: viewBoard, live: viewLive, money: viewMoney, record: viewRecord, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
-    renderFilters(S.tab === 'board' ? [...card.lines, ...card.props] : S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' || S.tab === 'live' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? (S.allPlayers ? allPlayerProps() : card.props) : S.tab === 'alts' ? altProps() : S.tab === 'lines' ? (card.board || []).filter(x => x.type === 'line' && !x.alt) : [...card.lines, ...card.props], { markets: S.tab === 'props' || S.tab === 'alts', sheet: S.tab === 'sheet' });
+    const v = { top: viewTop, alts: viewAlts, board: viewBoard, live: viewLive, money: viewMoney, record: viewRecord, news: viewNews, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
+    renderFilters(S.tab === 'board' ? [...card.lines, ...card.props] : S.tab === 'news' ? newsItems() : S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' || S.tab === 'live' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? (S.allPlayers ? allPlayerProps() : card.props) : S.tab === 'alts' ? altProps() : S.tab === 'lines' ? (card.board || []).filter(x => x.type === 'line' && !x.alt) : [...card.lines, ...card.props], { markets: S.tab === 'props' || S.tab === 'alts', sheet: S.tab === 'sheet' });
     $('view').innerHTML = v();
   }
 
@@ -852,7 +915,7 @@
     if (e.target.closest('input.pin')) return;
     if (e.target.id === 'moreBtn') { S.shown += 150; render(); return; }
     if (e.target.id === 'liveNow') { refreshLive(true); return; }
-    const el = e.target.closest('[data-add],[data-open],[data-tab],[data-section],[data-allp],[data-best],[data-gltype],[data-lg],[data-mk],[data-close],[data-loadparlay],#overlay,#slipbar,#liveBtn,#setBtn,#saveSet,#dropLive,#clearSlip,#buildBtn');
+    const el = e.target.closest('[data-add],[data-open],[data-tab],[data-section],[data-allp],[data-best],[data-gltype],[data-newssec],[data-injonly],[data-newsteam],[data-lg],[data-mk],[data-close],[data-loadparlay],#overlay,#slipbar,#liveBtn,#setBtn,#saveSet,#dropLive,#clearSlip,#buildBtn');
     if (!el) return;
     if (el.dataset.add) { e.stopPropagation(); toggleSlip(el.dataset.add); return; }
     if (el.dataset.open) { openDetail(el.dataset.open); return; }
@@ -860,6 +923,9 @@
     if (el.dataset.tab) { e.preventDefault(); window.scrollTo({ top: 0 }); S.tab = el.dataset.tab; store.set('tab', S.tab); S.market = 'ALL'; render(); return; }
     if (el.dataset.lg) { S.lg = el.dataset.lg; S.market = 'ALL'; S.team = 'ALL'; render(); return; }
     if (el.dataset.mk) { S.market = el.dataset.mk; render(); return; }
+    if (el.dataset.newssec) { S.newsSec = el.dataset.newssec; store.set('newsSec', S.newsSec); render(); return; }
+    if (el.dataset.injonly) { S.injOnly = el.dataset.injonly === '1'; render(); return; }
+    if (el.dataset.newsteam) { S.team = el.dataset.newsteam; S.tab = 'props'; S.allPlayers = true; store.set('allPlayers', true); render(); return; }
     if (el.dataset.gltype) { S.glType = el.dataset.gltype; store.set('glType', S.glType); render(); return; }
     if (el.dataset.best) { S.bestOnly = el.dataset.best === '1'; store.set('bestOnly', S.bestOnly); render(); return; }
     if (el.dataset.allp) { S.allPlayers = el.dataset.allp === '1'; store.set('allPlayers', S.allPlayers); S.shown = 120; render(); return; }

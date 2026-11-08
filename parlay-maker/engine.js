@@ -379,7 +379,7 @@
         const venue = { name: ven.fullName || sum.gameInfo?.venue?.fullName || '', city: ven.address?.city || '', state: ven.address?.state || '',
           country: ven.address?.country || '', indoor: ven.indoor === true };
         const weather = w ? { temp: w.temperature ?? w.highTemperature, gust: w.gust, precipChance: w.precipitation } : null;
-        return { home, away, model, kind: S.kind, espnId: best.e.id, venue, weather, start: best.e.date };
+        return { home, away, model, kind: S.kind, sport: leg.sport, lg: S.lg, espnId: best.e.id, venue, weather, start: best.e.date };
       })().catch(() => null);
     }
     function roster(sport, teamId) {
@@ -835,6 +835,70 @@
     return { card, used, left, added: props.length };
   }
 
+  // ---------------- Daily news + expected lineups (ESPN + NHL, free) ----------------
+  // News: ESPN headlines for every sport on the card, injury stories flagged. Lineups: confirmed XIs when posted
+  // (soccer, ~1h before), otherwise last game's starters (NBA, soccer) with today's injury list checked against them,
+  // and likely goalies (NHL). A starter who is out = someone else gets the minutes, so the lines may lag.
+  const INJ_RX = /injur|ruled out|\bout\b|questionable|doubtful|sidelined|surgery|return|ACL|hamstring|ankle|knee|concussion|suspend|illness|day-to-day|IR\b/i;
+  async function newsFor(card, getJSON) {
+    const news = {};
+    const sports = [...new Set(Object.values(card.games || {}).map(g => g.sport).filter(Boolean))];
+    await mapLimit(sports, 4, async sp => {
+      const S = SPORTS[sp]; if (!S?.espn) return;
+      const d = await getJSON(`https://site.api.espn.com/apis/site/v2/sports/${S.espn}/news?limit=15`);
+      const arts = (d?.articles || []).filter(a => a.headline && a.type !== 'Media').slice(0, 12).map(a => ({
+        h: a.headline, d: (a.description || '').slice(0, 220), url: a.links?.web?.href || '', at: a.published || a.lastModified || '',
+        img: a.images?.[0]?.url || '', inj: INJ_RX.test(a.headline + ' ' + (a.description || '')),
+        tags: (a.categories || []).map(c => c.description).filter(Boolean).slice(0, 4) }));
+      if (arts.length) news[S.lg] = [...(news[S.lg] || []), ...arts].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 15);
+    });
+    return news;
+  }
+  async function lineupsFor(card, getJSON, now = new Date()) {
+    const out = {};
+    const kindOf = g => SPORTS[g.sport]?.espn?.startsWith('soccer/') ? 'soc' : g.kind;
+    const games = Object.entries(card.games || {}).map(([k, g]) => [k, { ...g, kind: kindOf(g) }])
+      .filter(([, g]) => g.sport && g.start && new Date(g.start) > now && ['bb', 'soc', 'hk'].includes(g.kind) && !/ncaab/.test(g.sport))
+      .sort((a, b) => a[1].start.localeCompare(b[1].start)).slice(0, 40);
+    const startersOf = (sum, teamId, kind) => {
+      if (kind === 'soc') {
+        const r = (sum?.rosters || []).find(t => t.team?.id === teamId);
+        const xi = (r?.roster || []).filter(p => p.starter).map(p => ({ n: p.athlete?.displayName, pos: p.position?.abbreviation || '', id: p.athlete?.id }));
+        return xi.length ? { players: xi, formation: r.formation || '' } : null;
+      }
+      const t = (sum?.boxscore?.players || []).find(t => t.team?.id === teamId);
+      const st = (t?.statistics?.[0]?.athletes || []).filter(a => a.starter).map(a => ({ n: a.athlete?.displayName, pos: a.athlete?.position?.abbreviation || '', id: a.athlete?.id }));
+      return st.length ? { players: st } : null;
+    };
+    await mapLimit(games, 4, async ([eid, g]) => {
+      const base = `https://site.api.espn.com/apis/site/v2/sports/${SPORTS[g.sport].espn}`;
+      const L = { kind: g.kind };
+      if (g.kind === 'hk') {
+        const G = await nhlGoalies({ start: g.start, home: g.home.name, away: g.away.name }, g, getJSON);
+        if (G?.home || G?.away) L.goalies = { home: G.home ? { n: G.home.name, sv: G.home.sv, gaa: G.home.gaa } : null, away: G.away ? { n: G.away.name, sv: G.away.sv, gaa: G.away.gaa } : null };
+      } else {
+        const sum = g.kind === 'soc' ? await getJSON(`${base}/summary?event=${g.espnId}`) : null;
+        for (const side of ['home', 'away']) {
+          const t = g[side];
+          let lu = startersOf(sum, t.id, g.kind), status = 'confirmed';
+          if (!lu) {
+            const sch = await getJSON(`${base}/teams/${t.id}/schedule`);
+            const last = (sch?.events || []).filter(e => e.competitions?.[0]?.status?.type?.completed).sort((a, b) => b.date.localeCompare(a.date))[0];
+            const ls = last ? await getJSON(`${base}/summary?event=${last.id}`) : null;
+            lu = startersOf(ls, t.id, g.kind); status = 'projected';
+            if (lu && last) lu.from = last.date;
+          }
+          if (!lu) continue;
+          const injBy = Object.fromEntries((t.injuries || []).map(p => [p.id, p]));
+          lu.players = lu.players.map(p => injBy[p.id] ? { ...p, st: injBy[p.id].status, why: injBy[p.id].type } : p);
+          L[side] = { status, ...lu };
+        }
+      }
+      if (L.home || L.away || L.goalies) out[eid] = L;
+    });
+    return out;
+  }
+
   async function analyzeCard(card, get, log = () => {}, opts = {}) {
     const af = makeApiFootball(opts.apiFootballKey, get);
     // drop anything that has already started (matters when re-running on a saved card)
@@ -931,6 +995,10 @@
     const potd = pickOfDay([...lines, ...props]);
     card.potd = potd ? potd.id : null;
     card.potdParlay = parlayOfDay([...lines, ...props]);
+    card.news = await newsFor(card, getJSON).catch(() => ({}));
+    card.lineups = await lineupsFor(card, getJSON, nowD).catch(() => ({}));
+    card.newsAt = new Date().toISOString();
+    log(`news: ${Object.values(card.news).flat().length} stories · lineups for ${Object.keys(card.lineups).length} games`);
     log(`analyzed ${Object.keys(card.games).length} games${af ? ` · API-Football calls ${af.calls()}` : ''}`);
     return card;
   }
@@ -1516,7 +1584,7 @@
     legsFromEvents, propsFromEvent, oneSidedFromEvent, altsFromEvent, altPropsFromEvent, ladderModel, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
     parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
     pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult, liveStatus, closingFor, boxRows,
-    extraNotes, weatherFor, marketsFor, nhlGoalies, nflverse, makeApiFootball, apiFootballNotes, kalshiProps, kalshiNote, topUpProps };
+    extraNotes, weatherFor, marketsFor, nhlGoalies, nflverse, makeApiFootball, apiFootballNotes, kalshiProps, kalshiNote, topUpProps, newsFor, lineupsFor, INJ_RX };
   root.Engine = Engine;
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

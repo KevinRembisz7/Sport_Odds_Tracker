@@ -12,6 +12,10 @@ Daily +EV sports picks, **player props** and parlays. Every price is checked aga
 - **🎯 Parlay of the Day**: the +EV parlay most likely to hit. Every leg is ≥50% to win on its own, with one leg per game.
 - **📈 Track record**: both picks are saved to `data/history.js` and graded from the ESPN final box scores on the next morning's run. The record shows W-L, units (1u flat) and actual vs expected hit rate.
 - **🪜 Alt props (ladders)**: rungs like 10+ PTS, 3+ AST and 7+ REB. Books post these Over-only, so each rung is priced from the player's main line (no-vig) through a fitted distribution: normal for points and yards, negative binomial for small counts. When 3+ books post the same rung, that's blended with their vig-adjusted median. Model-only rungs must be 10–85% to hit and need a 5% edge; blended rungs need 3%. Checked against 107 multi-book rungs, the model sits within ~3 points of the market and leans slightly conservative.
+- **📰 News**: filter by sport with the chips (plus day, time, team and search). It has two views.
+  - **📋 Lineups & injuries** (one card per game): confirmed soccer XIs once posted (about an hour before kickoff), otherwise projected starters from each team's last game (NBA, soccer), likely NHL goalies and the full injury report. When a projected starter is on the report as out or doubtful, a ⚠️ box flags it: teammates' props and the team total are where the books can lag.
+  - **📰 Headlines**: ESPN stories for every sport on the card, with an 🚑 injury-only toggle.
+  - **Cost and freshness**: all free. It updates every time the card refreshes, 7 times a day.
 - **📋 bet365 sheet**: The Odds API doesn't carry bet365, so the card ships fair odds for every line and prop. You type in bet365's price and the app computes your edge.
 
 ## Files
