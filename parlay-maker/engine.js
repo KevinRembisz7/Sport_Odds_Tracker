@@ -1739,15 +1739,14 @@
     if (!today && (potd || par || lad)) { today = migrateDay({ date, clv: [] }); history.push(today); }
     if (today) {
       if (!today.clv?.length) today.clv = card.lines.filter(x => x.dec && !x.alt && !x.espnLine && x.ev >= 0.01 && x.ev < STALE).slice(0, 25).map(snap);
-      // EVERY posted pick is recorded. The current pick stays locked until its game starts; after that a refresh may
-      // post a new pick for a later game, and that one is added to the day too (never swapped, never dropped).
+      // EVERY posted pick is recorded and stays on the page. A posted pick is never changed: if a refresh finds a
+      // better one, it's added on top as the new Pick of the Day and the earlier ones keep showing (and get graded).
       const started = legs => legs.some(l => l?.start && new Date(l.start) <= now);
       const fresh = legs => legs.every(l => l?.start && new Date(l.start) > now);
-      const curP = today.picks[today.picks.length - 1];
-      if (potd && fresh([potd]) && (!curP || (started([curP]) && !today.picks.some(p => p.id === potd.id)))) today.picks.push(snap(potd));
-      const curX = today.parlays[today.parlays.length - 1], nx = multi(par);
+      if (potd && fresh([potd]) && !today.picks.some(p => p.id === potd.id)) today.picks.push(snap(potd));
+      const nx = multi(par);
       const sameLegs = (a, b) => a.legs.map(l => l.id).sort().join() === b.legs.map(l => l.id).sort().join();
-      if (nx && fresh(nx.legs) && (!curX || (started(curX.legs) && !today.parlays.some(p => sameLegs(p, nx))))) today.parlays.push(nx);
+      if (nx && fresh(nx.legs) && !today.parlays.some(p => sameLegs(p, nx))) today.parlays.push(nx);
       if (!today.ladder && lad) today.ladder = multi(lad); // the ladder is one bet per day
       // the card shows exactly what's being tracked: the latest posted pick / parlay
       const P = today.picks[today.picks.length - 1], X = today.parlays[today.parlays.length - 1];

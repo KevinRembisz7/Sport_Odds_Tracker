@@ -128,9 +128,9 @@
   .b365 b { color: var(--edge); }
   .pin { width: 96px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font-size: 13px; font-weight: 700; text-align: center; }
   .pin:focus { outline: 2px solid var(--accent); border-color: transparent; }
-  .hero2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 6px 0 4px; }
-  @media (max-width: 860px) { .hero2 { grid-template-columns: 1fr; } }
-  .hero2 > div { display: flex; flex-direction: column; gap: 8px; }
+  .hero2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin: 6px 0 4px; }
+  @media (max-width: 860px) { .hero2 { grid-template-columns: minmax(0, 1fr); } }
+  .hero2 > div { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
   .hero2 .card, .hero2 .parlay { flex: 1; box-shadow: var(--glow); }
   .ribbon { align-self: flex-start; font-size: 12px; font-weight: 900; letter-spacing: .08em; padding: 5px 12px; border-radius: 999px; color: #1a1300;
     background: linear-gradient(90deg, #ffd34d, #ffb547); }
@@ -143,6 +143,10 @@
   .sec a { color: var(--accent); text-decoration: none; font-weight: 700; }
   .ladder { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
   @media (max-width: 640px) { .ladder { grid-template-columns: 1fr; } }
+  .earlier { display: flex; flex-direction: column; gap: 8px; }
+  .erow { display: flex; gap: 12px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; }
+  .erow .t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13.5px; }
+  .erow .t small { font-size: 11px; font-weight: 700; }
   .lsteps { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 6px; margin-top: 12px; }
   @media (max-width: 640px) { .lsteps { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
   .lstep { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 4px; text-align: center; display: flex; flex-direction: column; gap: 2px; min-width: 0; }

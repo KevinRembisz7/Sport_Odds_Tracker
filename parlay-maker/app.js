@@ -215,17 +215,22 @@
   function heroHTML() {
     const p = byId[card.potd], par = card.potdParlay;
     if (!p && !par) return '';
-    // earlier picks today, with live results from the record
+    // every earlier pick / parlay today stays on the page with its result (they're all on the record)
     const todayH = H.find(h => h.date === (card.generatedAt ? new Date(card.generatedAt).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }).replace(/-/g, '') : ''));
-    const res = r => r === 'won' ? '✅' : r === 'lost' ? '❌' : r === 'push' || r === 'void' ? '➖' : '⏳';
-    const earlier = todayH ? [...dayPicks(todayH).filter(x => x.id !== card.potd).map(x => `${res(x.result)} ⭐ ${esc(x.pick)}${x.actual ? ` <span class="muted">(${esc(x.actual)})</span>` : ''}`),
-      ...dayParlays(todayH).filter(x => x.legs.map(l => l.id).join() !== (par?.legs || []).join()).map(x => `${res(x.result)} 🎯 ${x.legs.map(l => esc(l.pick)).join(' + ')}`)] : [];
-    const why = p ? [`<b>${signPct(p.ev)}</b> edge`, `<b>${pct(p.fairP, 0)}</b> to hit`, p.vibe ? `vibe <b>${p.vibe.score > 0 ? '+' : ''}${p.vibe.score}</b>` : '',
-      p.vibe?.hit ? `cleared <b>${p.vibe.hit.hits}/${p.vibe.hit.n}</b> recent games` : '', `bet <b>${unitsTxt(unitsFor(p))}</b>`].filter(Boolean).join(' · ') : '';
-    return `${earlier.length ? `<div class="howto" style="margin-bottom:10px">📌 <b>Earlier today</b> (tracked on the record): ${earlier.join(' · ')}</div>` : ''}<div class="hero2">
-      ${p ? `<div><div class="ribbon">⭐ PICK OF THE DAY</div>${pickCard_(p, true)}<p class="note">Why it's the pick: ${why}</p></div>` : ''}
-      ${par ? `<div><div class="ribbon alt">🎯 PARLAY OF THE DAY · most likely to hit</div>${parlayCard({ name: 'Parlay of the Day', emoji: '🎯', blurb: `Every leg ${'≥'}50% to win on its own, all +EV, one per game`, legs: par.legs }, true)}</div>` : ''}
-    </div>`;
+    const resB = (r, actual) => `<span class="res ${esc(r || 'pending')}">${r === 'won' ? '✅ Won' : r === 'lost' ? '❌ Lost' : r === 'push' ? '➖ Push' : r === 'void' ? '⚪ Void' : '⏳ Pending'}</span>${actual ? ` <span class="muted">${esc(actual)}</span>` : ''}`;
+    const prevPicks = todayH ? (todayH.picks || []).filter(x => x.id !== card.potd).reverse() : [];
+    const prevPars = todayH ? (todayH.parlays || []).filter(x => x.legs.map(l => l.id).join() !== (par?.legs || []).join()).reverse() : [];
+    const nP = todayH?.picks?.length || 0, nX = todayH?.parlays?.length || 0;
+    const earlierHTML = prevPicks.length || prevPars.length ? `<div class="earlier"><div class="sec" style="margin-top:14px"><h2>📌 Earlier picks today</h2><span>replaced by a better pick, but still tracked on the record</span></div>
+      ${prevPicks.map(x => `<div class="erow">${avatar(x)}<div class="t"><small class="muted">⭐ Pick #${(todayH.picks.indexOf(x)) + 1} of ${nP}</small><b>${esc(x.pick)}</b><span class="muted">${esc(x.game)} · ${toAm(x.dec)} ${esc(x.book || '')}</span></div><div>${resB(x.result, x.actual)}</div></div>`).join('')}
+      ${prevPars.map(x => `<div class="erow"><div class="avatar">🎯</div><div class="t"><small class="muted">🎯 Parlay #${todayH.parlays.indexOf(x) + 1} of ${nX} · ${toAm(x.dec)}</small>${x.legs.map(l => `<span>${l.result === 'won' ? '✅' : l.result === 'lost' ? '❌' : '⏳'} ${esc(l.pick)}${l.actual ? ` <span class="muted">(${esc(l.actual)})</span>` : ''}</span>`).join('')}</div><div>${resB(x.result)}</div></div>`).join('')}</div>` : '';
+    const vs = typeof p?.vibe === 'number' ? p.vibe : p?.vibe?.score;
+    const why = p ? [p.ev != null ? `<b>${signPct(p.ev)}</b> edge` : '', p.fairP ? `<b>${pct(p.fairP, 0)}</b> to hit` : '', vs != null ? `vibe <b>${vs > 0 ? '+' : ''}${vs}</b>` : '',
+      p.vibe?.hit ? `cleared <b>${p.vibe.hit.hits}/${p.vibe.hit.n}</b> recent games` : p.hit ? `cleared <b>${p.hit.hits}/${p.hit.n}</b> recent games` : '', p.dec ? `bet <b>${unitsTxt(unitsFor(p))}</b>` : ''].filter(Boolean).join(' · ') : '';
+    return `<div class="hero2">
+      ${p ? `<div><div class="ribbon">⭐ PICK OF THE DAY${nP > 1 ? ` · #${nP} (newest)` : ''}</div>${pickCard_(p, true)}<p class="note">Why it's the pick: ${why}</p></div>` : ''}
+      ${par ? `<div><div class="ribbon alt">🎯 PARLAY OF THE DAY${nX > 1 ? ` · #${nX} (newest)` : ' · most likely to hit'}</div>${parlayCard({ name: 'Parlay of the Day', emoji: '🎯', blurb: `Every leg ${'≥'}50% to win on its own, all +EV, one per game`, legs: par.legs }, true)}</div>` : ''}
+    </div>${earlierHTML}`;
   }
   const dayPicks = h => h.picks || (h.potd ? [h.potd] : []), dayParlays = h => h.parlays || (h.parlay ? [h.parlay] : []);
   function settledRows(kind) {
@@ -254,7 +259,7 @@
       <div class="dots2">${r.rows.slice(0, 10).map(resDot).join('')}</div></div>`;
     return `<div class="sec"><h2>📈 Track record</h2><span>auto-graded from final box scores · 1 unit flat stakes · <a href="#" data-tab="record">full history →</a></span></div>
       <div class="kpis" style="grid-template-columns:repeat(${c.rows.length ? 3 : 2},minmax(0,1fr))">${tile('⭐ Pick of the Day', a)}${tile('🎯 Parlay of the Day', b)}${c.rows.length ? tile('🧗 Ladder bet', c) : ''}</div>
-      <p class="note">🔒 Every Pick and Parlay of the Day the site posts is recorded. A pick stays locked until its game starts; after that a new pick can be posted for a later game, and it's added here too (Pick #2, #3…). Nothing gets swapped or dropped, so every loss counts.</p>`;
+      <p class="note">🔒 Every Pick and Parlay of the Day the site ever posts is on this record. Posted picks are never changed: when a better one comes along it's added on top as Pick #2, #3…, and the earlier ones stay up and get graded too. Full transparency, every loss counts.</p>`;
   }
   function clvStats() {
     const legs = H.flatMap(h => [...(h.clv || []), ...dayPicks(h).filter(l => l.type === 'line'), ...dayParlays(h).flatMap(p => p.legs).filter(l => l.type === 'line')]);

@@ -22,7 +22,7 @@ Daily +EV sports picks, **player props** and parlays. Every price is checked aga
   - **QB out**: pass catchers lean Under.
   - **Questionable starters**: everything is capped at ⚠️ Risky, and their own Overs get 🚫 Avoid.
 - **🧗 12-Day Ladder**: one bet a day paying about 2x (−125 to +110). It's a single, or 2 likely legs (60%+ each) stacked, ranked by chance to hit. Roll the winnings onto the next day; 12 straight wins finishes the ladder, and a loss sends you back to Day 1. The tab tracks the current day, the amount riding, attempts, ladders completed, best run, the W-L record and a day-by-day log. The starting amount ($10 by default) can be changed on the tab.
-- **🔒 Every posted pick is tracked**: each Pick and Parlay of the Day the site posts goes on the record. A pick stays locked until its game starts. After that, a refresh can post a new pick for a later game, and it's recorded too (Pick #2, #3…). Nothing is swapped or dropped. The 🧗 ladder bet is one per day. The ↻ Live refresh re-prices lines but always shows the tracked picks.
+- **🔒 Every posted pick is tracked**: each Pick and Parlay of the Day the site ever posts goes on the record, and a posted pick is never changed. When a refresh finds a better one, it's added on top (Pick #2, #3…). The earlier ones stay on the Top Picks page under "Earlier picks today", with live results, and get graded too. The 🧗 ladder bet is one per day. The ↻ Live refresh re-prices lines but always shows the tracked picks.
 - **📋 bet365 sheet**: The Odds API doesn't carry bet365, so the card ships fair odds for every line and prop. You type in bet365's price and the app computes your edge.
 
 ## Files
