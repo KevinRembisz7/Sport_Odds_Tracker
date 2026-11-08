@@ -38,6 +38,10 @@
   };
   // Pinnacle + 9 US books = one "region" worth of credits on The Odds API.
   const BOOKS = 'pinnacle,draftkings,fanduel,betmgm,williamhill_us,espnbet,betrivers,fanatics,betonlineag,bovada';
+  // Books in our pull that are licensed in Canada (Ontario / AGCO): FanDuel, DraftKings, BetMGM, Caesars, BetRivers,
+  // theScore Bet (the Odds API's 'espnbet' key) and Pinnacle. Bet99, Sports Interaction, PROLINE+ etc. aren't in the API:
+  // those work like bet365 mode (fair odds + a target, you type the price).
+  const CA_BOOKS = /^(fanduel|draftkings|betmgm|williamhill_us|betrivers|espnbet|pinnacle)$/;
   const US_BOOKS = /^(draftkings|fanduel|betmgm|williamhill_us|espnbet|betrivers|fanatics|ballybet|hardrockbet|betonlineag|bovada|mybookieag|lowvig|betus|betparx|fliff|rebet|betanysports)/;
   const STALE = 0.15;           // edges above this are almost always bad/stale lines
   const PROP_STALE = 0.20;
@@ -316,11 +320,16 @@
     return out;
   }
 
-  function applyBooks(items, allowAll) {
+  // mode: false = US books, true = every book, 'ca' = Canadian books. Also stores the best Canadian price on every item
+  // (caDec / caBook) so the site can switch to Canada without re-pulling odds.
+  function applyBooks(items, mode) {
+    const ok = mode === 'ca' ? k => CA_BOOKS.test(k) : mode ? () => true : k => US_BOOKS.test(k);
     for (const l of items) {
       if (!l.prices) continue;
-      const best = l.prices.filter(p => allowAll || US_BOOKS.test(p.key)).sort((a, b) => b.dec - a.dec)[0];
+      const sorted = [...l.prices].sort((a, b) => b.dec - a.dec);
+      const best = sorted.find(p => ok(p.key)), ca = sorted.find(p => CA_BOOKS.test(p.key));
       l.dec = best?.dec ?? null; l.book = best?.title ?? ''; l.ev = best ? l.fairP * best.dec - 1 : -1;
+      l.caDec = ca?.dec ?? 0; l.caBook = ca?.title ?? '';
     }
     return items;
   }
@@ -783,7 +792,7 @@
 
   // ESPN matchup + player analysis and prebuilt parlays. Free (no odds credits), so it can be re-run on a saved card.
   const BOARD_KEEP = ['id', 'type', 'eventId', 'sport', 'lg', 'emoji', 'game', 'home', 'away', 'team', 'market', 'point', 'pick',
-    'player', 'side', 'statLabel', 'fairP', 'src', 'start', 'alt', 'oneSided', 'dec', 'book', 'ev'];
+    'player', 'side', 'statLabel', 'fairP', 'src', 'start', 'alt', 'oneSided', 'dec', 'book', 'ev', 'caDec', 'caBook'];
 
   // Evening top-up: the morning build spends the day's budget soonest-game-first, so late tips (10 PM ET NBA, West
   // Coast NHL) often end up with no sportsbook props. This buys props only for games starting in the next few hours
@@ -1760,7 +1769,7 @@
     return history;
   }
 
-  const Engine = { SPORTS, PROP_STATS, STALE, PROP_STALE, toDec, toAm, pct, esc, devig, norm, normName,
+  const Engine = { CA_BOOKS, SPORTS, PROP_STATS, STALE, PROP_STALE, toDec, toAm, pct, esc, devig, norm, normName,
     legsFromEvents, propsFromEvent, oneSidedFromEvent, altsFromEvent, altPropsFromEvent, ladderModel, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
     parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
     pickOfDay, parlayOfDay, ladderOfDay, ladderState, LADDER_DAYS, gradeLeg, updateHistory, migrateDay, snap, parlayResult, liveStatus, closingFor, boxRows,

@@ -13,11 +13,17 @@
   const S = {
     tab: store.get('tab', 'top'), lg: 'ALL', market: 'ALL', q: '', sort: 'ev',
     slip: store.get('slip', []), bankroll: store.get('bankroll', 500), kfrac: store.get('kfrac', 0.25),
-    key: store.get('key', ''), budget: store.get('budget2', 8), allBooks: store.get('allBooks', false),
+    key: store.get('key', ''), budget: store.get('budget2', 8), allBooks: store.get('allBooks', false), region: store.get('region', store.get('allBooks', false) ? 'all' : 'us'),
     unit: store.get('unit', 0), day: 'ALL', time: 'ALL', team: 'ALL', glType: store.get('glType', 'ALL'),
     myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), allPlayers: store.get('allPlayers', false), ladStart: store.get('ladStart', 10), newsSec: store.get('newsSec', 'plays'), injOnly: false, bestOnly: store.get('bestOnly', false), prices: store.get('prices', {}), type: 'ALL', shown: 120,
   };
-  const B365 = () => S.myBook === 'bet365';
+  // "My sportsbook": any book you type prices in from (bet365 and the Canadian books The Odds API doesn't carry),
+  // or 'best' = the best pulled price in your region (US / Canada / all)
+  const TYPE_IN = ['bet365', 'Bet99', 'Sports Interaction', 'PROLINE+', 'NorthStar Bets', 'TonyBet', 'PowerPlay', 'Betway', 'Betano', 'LeoVegas', '888sport', 'bwin', 'Mise-o-jeu+', 'Casumo'];
+  const B365 = () => S.myBook !== 'best';
+  const MYB = () => B365() ? (S.myBook || 'bet365') : 'best price';
+  const SB = () => ({ 'Sports Interaction': 'SIA', 'NorthStar Bets': 'NorthStar', 'Mise-o-jeu+': 'MOJ+', bet365: '365' })[MYB()] || MYB();
+  const bookMode = () => S.region === 'all' ? true : S.region === 'ca' ? 'ca' : false;
   const EDGE_BUFFER = 0.02; // target price = break-even + 2% EV
   let byId = {};
   const H = window.EDGE_HISTORY || [];
@@ -43,15 +49,24 @@
     const upcoming = x => !x.start || new Date(x.start) > Date.now();
     card.lines = card.lines.filter(upcoming); card.props = card.props.filter(upcoming);
     if (card.board) card.board = card.board.filter(upcoming);
+    if (S.region === 'ca') useCanada();
     applyPrices();
     S.slip = S.slip.filter(id => byId[id]);
   }
-  // Prices the user typed in from their own book (bet365) override the pulled best price.
+  // 🇨🇦 Canada: best price only from books licensed in Canada; anything that's no longer +EV drops off the pick lists
+  function useCanada() {
+    if (card._ca) return; card._ca = true;
+    E.applyBooks([...card.lines, ...card.props], 'ca');
+    for (const x of card.board || []) if (x.caDec !== undefined && !x.prices) { x.dec = x.caDec || null; x.book = x.caBook || ''; x.ev = x.dec ? x.fairP * x.dec - 1 : null; }
+    const keep = x => x.dec && x.ev >= (x.minEdge ?? 0.005);
+    card.lines = card.lines.filter(keep); card.props = card.props.filter(keep);
+  }
+  // Prices the user typed in from their own book (bet365, Bet99, …) override the pulled best price.
   function applyPrices() {
     for (const x of Object.values(byId)) {
       if (!x._orig) x._orig = { dec: x.dec, book: x.book, ev: x.ev };
       const am = S.prices[x.id];
-      if (am) { x.dec = E.toDec(am); x.book = 'bet365'; x.ev = x.fairP * x.dec - 1; x.mine = true; }
+      if (am) { x.dec = E.toDec(am); x.book = MYB(); x.ev = x.fairP * x.dec - 1; x.mine = true; }
       else { Object.assign(x, x._orig); x.mine = false; }
     }
   }
@@ -62,7 +77,7 @@
     store.set('prices', S.prices); applyPrices();
     render();
   }
-  const priceInput = x => `<input class="pin" inputmode="numeric" data-price="${esc(x.id)}" placeholder="bet365 odds" value="${S.prices[x.id] ? (S.prices[x.id] > 0 ? '+' : '') + S.prices[x.id] : ''}">`;
+  const priceInput = x => `<input class="pin" inputmode="numeric" data-price="${esc(x.id)}" placeholder="${esc(MYB())} odds" value="${S.prices[x.id] ? (S.prices[x.id] > 0 ? '+' : '') + S.prices[x.id] : ''}">`;
 
   // ---------- helpers ----------
   const fmtTime = iso => iso ? new Date(iso).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
@@ -135,7 +150,7 @@
         <div class="meter"><span>Book</span><div class="track"><i style="width:${100 / x.dec}%;background:var(--muted)"></i></div><b>${pct(1 / x.dec, 0)}</b></div>
       </div>
       ${hit ? `<div class="spark">${sparkSVG(hit, x.point)}<div><span class="hitrate">${hit.hits}/${hit.n}</span> ${x.side.toLowerCase()} last ${hit.n}<br>avg ${hit.avg.toFixed(1)} · line ${x.point}</div></div>` : ''}
-      ${B365() ? `<div class="b365"><span>🎯 bet365 target <b>${targetAm(x)}</b> or better</span>${priceInput(x)}</div>` : ''}
+      ${B365() ? `<div class="b365"><span>🎯 ${esc(MYB())} target <b>${targetAm(x)}</b> or better</span>${priceInput(x)}</div>` : ''}
       ${items.length ? `<ul class="why-mini">${items.map(i => `<li class="${i.tone}">${i.text}</li>`).join('')}</ul>` : ''}
       <div class="c-foot"><span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)} EV</span>${unitsChip(unitsFor(x))}
         <span class="muted" style="font-size:12px">fair ${toAm(1 / x.fairP)}</span>${isSus(x) ? '<span class="sus">⚠ sus line</span>' : ''}
@@ -146,7 +161,7 @@
   // ---------- views ----------
   const TABS = [['top', '🔥 Top Picks'], ['live', '🔴 Live'], ['money', '💰 Money Builder'], ['climb', '🧗 12-Day Ladder'], ['board', '🗂️ Bet Board'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['alts', '🪜 Alt Lines'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['news', '📰 News'], ['record', '📈 Record'], ['how', '📘 How it works']];
   function renderTabs() {
-    $('tabs').innerHTML = TABS.map(([k, l]) => [k, k === 'sheet' && B365() ? '📋 bet365 Sheet' : l]).map(([k, l]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
+    $('tabs').innerHTML = TABS.map(([k, l]) => [k, k === 'sheet' && B365() ? `📋 ${MYB()} Sheet` : l]).map(([k, l]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
     requestAnimationFrame(() => { $('tabs').querySelector('.tab.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); tabArrows(); });
   }
   // ◀ ▶ arrows for the tab bar (mice can't swipe sideways); shown only when there are tabs hidden off that edge
@@ -507,7 +522,7 @@
       ${top.vibe?.hit?.vals ? `<div class="spark">${sparkSVG(top.vibe.hit, top.point)}<div><span class="hitrate">${top.vibe.hit.hits}/${top.vibe.hit.n}</span> ${esc(top.side.toLowerCase())} ${top.point} ${esc(top.statLabel)}<br>last ${top.vibe.hit.n} · avg ${top.vibe.hit.avg}</div></div>` : ''}
       ${ps.map((x, i) => `<div class="prow ${i === 0 ? 'best' : ''}" data-open="${esc(x.id)}">
         <div class="t"><b>${i === 0 ? '⭐ ' : ''}${esc(propLabel(x))}</b>
-          <span class="muted">${x.dec ? `${toAm(x.dec)} ${esc(x.book)}` : `fair ${toAm(1 / x.fairP)} · ${pct(x.fairP, 0)}`}${x.vibe?.hit ? ` · <b class="${x.vibe.hit.l10 >= 0.6 ? 'good' : x.vibe.hit.l10 <= 0.4 ? 'bad' : ''}" style="display:inline">hit ${x.vibe.hit.hits}/${x.vibe.hit.n}</b> · avg ${x.vibe.hit.avg}` : ''}${x.vibe?.score ? ` · vibe ${x.vibe.score > 0 ? '+' : ''}${x.vibe.score}` : ''}${B365() ? ` · bet365 ≥ ${targetAm(x)}` : ''}</span></div>
+          <span class="muted">${x.dec ? `${toAm(x.dec)} ${esc(x.book)}` : `fair ${toAm(1 / x.fairP)} · ${pct(x.fairP, 0)}`}${x.vibe?.hit ? ` · <b class="${x.vibe.hit.l10 >= 0.6 ? 'good' : x.vibe.hit.l10 <= 0.4 ? 'bad' : ''}" style="display:inline">hit ${x.vibe.hit.hits}/${x.vibe.hit.n}</b> · avg ${x.vibe.hit.avg}` : ''}${x.vibe?.score ? ` · vibe ${x.vibe.score > 0 ? '+' : ''}${x.vibe.score}` : ''}${B365() ? ` · ${esc(MYB())} ≥ ${targetAm(x)}` : ''}</span></div>
         ${x.dec && x.ev != null ? `<span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)}</span>` : '<span class="muted">—</span>'}
         <button class="add ${S.slip.includes(x.id) ? 'in' : ''}" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓' : '+'}</button></div>`).join('')}
     </article>`;
@@ -548,7 +563,7 @@
       <b>${esc(label)}</b>
       <span class="ghit">${pct(x.fairP, 0)} to hit${vs != null && vs !== 0 ? ` · <span class="${vs >= 2 ? 'good' : vs <= -2 ? 'bad' : ''}">${vs > 0 ? '+' : ''}${vs}</span>` : ''}</span>
       <span class="gp">${x.dec ? toAm(x.dec) : toAm(1 / x.fairP)}</span>
-      <small>${B365() ? `<span class="wide">${x.dec ? `fair${x.espnLine ? '*' : ''} ${toAm(1 / x.fairP)} · ` : ''}</span>365 ≥ ${targetAm(x)}` : x.dec ? `fair${x.espnLine ? '*' : ''} ${toAm(1 / x.fairP)}` : 'fair'}</small>
+      <small>${B365() ? `<span class="wide">${x.dec ? `fair${x.espnLine ? '*' : ''} ${toAm(1 / x.fairP)} · ` : ''}</span>${esc(SB())} ≥ ${targetAm(x)}` : x.dec ? `fair${x.espnLine ? '*' : ''} ${toAm(1 / x.fairP)}` : 'fair'}</small>
       ${pos ? `<span class="edge">${signPct(x.ev)}</span>` : ''}
     </div>`;
   }
@@ -573,12 +588,12 @@
         <div>
           <h4>Inside each box</h4>
           ${row(cell('', '<b>−3.5</b><span class="ghit">57% to hit · <span class="good">+2</span></span><span class="gp">−110</span><small>fair −125 · 365 ≥ −118</small>'),
-            `<b>−3.5</b> the line (spread, total O/U, or ML)<br><b>57% to hit</b> true chance this side wins<br><b>+2</b> vibe (matchup score)<br><b>−110</b> best price found<br><b>fair −125</b> the no-vig price${B365() ? '<br><b>365 ≥ −118</b> bet it at bet365 only at this price or better' : ''}`)}
+            `<b>−3.5</b> the line (spread, total O/U, or ML)<br><b>57% to hit</b> true chance this side wins<br><b>+2</b> vibe (matchup score)<br><b>−110</b> best price found<br><b>fair −125</b> the no-vig price${B365() ? `<br><b>${esc(SB())} ≥ −118</b> bet it at ${esc(MYB())} only at this price or better` : ''}`)}
           <h4 style="margin-top:12px">Vibe (matchup score)</h4>
           ${row('<span class="good" style="font-size:15px">+2</span>&nbsp;<span class="muted">or more</span>', 'Injuries, form, goalies, weather, model and markets back this side')}
           ${row('<span style="font-size:15px">−1 to +1</span>', 'Mixed or no strong signal')}
           ${row('<span class="bad" style="font-size:15px">−2</span>&nbsp;<span class="muted">or less</span>', 'The data argues against this side')}
-          ${est ? row('<b>fair*</b>', 'The asterisk means the fair price is estimated from DraftKings (free, via ESPN). Fine for bet365 targets, but it can’t spot edges, so those boxes never turn green.') : ''}
+          ${est ? row('<b>fair*</b>', 'The asterisk means the fair price is estimated from DraftKings (free, via ESPN). Fine for ${esc(MYB())} targets, but it can’t spot edges, so those boxes never turn green.') : ''}
         </div>
       </div>
     </details>`;
@@ -638,7 +653,7 @@
         ${S.glType === 'ALL' && g.tt?.length ? (() => { // team totals (Kalshi): show the rung closest to a coin flip for each team
           const pickTT = team => g.tt.filter(x => x.team === team).sort((a, b) => Math.abs(a.fairP - 0.5) - Math.abs(b.fairP - 0.5))[0];
           const cells = [g.away, g.home].map(pickTT).filter(Boolean);
-          return cells.length ? `<div class="gtt">🎯 Team totals · ${cells.map(x => `<span data-open="${esc(x.id)}">${esc(x.team.split(' ').slice(-1)[0])} o${x.point} <b>${pct(x.fairP, 0)}</b>${B365() ? ` · 365 ≥ ${targetAm(x)}` : ''}</span>`).join(' · ')} <span class="muted">(Kalshi)</span></div>` : '';
+          return cells.length ? `<div class="gtt">🎯 Team totals · ${cells.map(x => `<span data-open="${esc(x.id)}">${esc(x.team.split(' ').slice(-1)[0])} o${x.point} <b>${pct(x.fairP, 0)}</b>${B365() ? ` · ${esc(SB())} ≥ ${targetAm(x)}` : ''}</span>`).join(' · ')} <span class="muted">(Kalshi)</span></div>` : '';
         })() : ''}
       </article>`;
     };
@@ -652,7 +667,7 @@
     const plus = items.filter(x => x.dec && x.ev >= 0.01 && !isSus(x));
     return `<div class="seg small"><button data-tab="props" data-allp-go="0">⭐ +EV only</button><button data-tab="props" data-allp-go="1">🧍 Every player (fair odds)</button><button class="on">🪜 Alt lines</button></div>
       <div class="sec"><h2>🪜 Alt Lines</h2><span>${items.length} lines · ${new Set(items.map(x => x.player)).size} players · 30+ / 40+ / 50+ yards, anytime TD, 20+ points and more</span></div>
-      <div class="howto">Every rung of every player's ladder with its <b>fair odds</b>, how often he's cleared it lately, and your <b>bet365 target</b>. <b>Green edge</b> = a sportsbook is paying more than fair right now${plus.length ? ` (<b>${plus.length}</b> on the board)` : ''}. Pick a sport and a stat up top to narrow it down.</div>
+      <div class="howto">Every rung of every player's ladder with its <b>fair odds</b>, how often he's cleared it lately, and your <b>${esc(MYB())} target</b>. <b>Green edge</b> = a sportsbook is paying more than fair right now${plus.length ? ` (<b>${plus.length}</b> on the board)` : ''}. Pick a sport and a stat up top to narrow it down.</div>
       ${playersGrid(items)}`;
   }
   function viewBoard() {
@@ -680,10 +695,10 @@
       ${body}`;
   }
   function viewProps() {
-    if (S.allPlayers) return `<div class="sec"><h2>Player props</h2><span>every priced prop, every sport · fair odds${B365() ? ' + bet365 targets' : ''}</span></div>${playerToggle()}${playersGrid(filtered(allPlayerProps()))}`;
+    if (S.allPlayers) return `<div class="sec"><h2>Player props</h2><span>every priced prop, every sport · fair odds${B365() ? ` + ${esc(MYB())} targets` : ''}</span></div>${playerToggle()}${playersGrid(filtered(allPlayerProps()))}`;
     const items = sortItems(filtered(card.props));
     const morePlayers = new Set(filtered(allPlayerProps()).map(x => x.player)).size - new Set(items.map(x => x.player)).size;
-    const moreHint = morePlayers > 0 ? `<div class="howto" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">🧍 <span><b>${morePlayers} more ${S.lg === 'ALL' ? '' : esc(S.lg) + ' '}players</b> have lines with fair odds, hit rates and bet365 targets (no sportsbook edge right now).</span><button class="btn small" data-allp="1">Show every player →</button></div>` : '';
+    const moreHint = morePlayers > 0 ? `<div class="howto" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">🧍 <span><b>${morePlayers} more ${S.lg === 'ALL' ? '' : esc(S.lg) + ' '}players</b> have lines with fair odds, hit rates and ${esc(MYB())} targets (no sportsbook edge right now).</span><button class="btn small" data-allp="1">Show every player →</button></div>` : '';
     return `<div class="sec"><h2>Player props</h2><span>${card.props.length} +EV prop sides · bars = last games vs the line</span></div>
       ${playerToggle()}
       ${items.length ? `<div class="grid">${items.map(x => pickCard_(x)).join('')}</div><div style="margin-top:14px">${moreHint}</div>`
@@ -703,9 +718,9 @@
     const all = filtered(card.board.map(x => byId[x.id]));
     const items = S.sort === 'time' || S.sort === 'ev' ? [...all].sort((a, b) => (b.mine ? 1 : 0) - (a.mine ? 1 : 0) || (S.sort === 'ev' ? (b.ev ?? -9) - (a.ev ?? -9) : 0) || a.start.localeCompare(b.start)) : sortItems(all);
     const rows = items.slice(0, S.shown);
-    return `<div class="sec"><h2>${B365() ? 'bet365 sheet' : 'Fair odds sheet'}</h2><span>${all.length} lines &amp; props · the sharp no-vig price for everything on the board</span></div>
-      <div class="howto">📲 Open bet365 → find the bet → if their odds are <b>at or above the target</b>, it's +EV. Type their price in to see your exact edge and add it to the slip.</div>
-      <div class="tbl"><div class="scroll"><table><thead><tr><th></th><th>Pick</th><th>Game</th><th>Start</th><th>Fair</th><th>Target</th><th>bet365 price</th><th>Edge</th><th></th></tr></thead><tbody>
+    return `<div class="sec"><h2>${B365() ? `${esc(MYB())} sheet` : 'Fair odds sheet'}</h2><span>${all.length} lines &amp; props · the sharp no-vig price for everything on the board</span></div>
+      <div class="howto">📲 Open ${esc(MYB())} → find the bet → if their odds are <b>at or above the target</b>, it's +EV. Type their price in to see your exact edge and add it to the slip.</div>
+      <div class="tbl"><div class="scroll"><table><thead><tr><th></th><th>Pick</th><th>Game</th><th>Start</th><th>Fair</th><th>Target</th><th>${esc(MYB())} price</th><th>Edge</th><th></th></tr></thead><tbody>
       ${rows.map(x => `<tr data-open="${esc(x.id)}"><td><span class="tag">${x.emoji} ${esc(x.lg)}</span></td><td><b>${esc(x.pick)}</b></td><td class="muted">${esc(x.game)}</td>
         <td class="muted">${esc(fmtTime(x.start))}</td><td>${toAm(1 / x.fairP)}</td><td><b style="color:var(--edge)">${targetAm(x)}</b></td><td>${priceInput(x)}</td>
         <td>${x.mine ? `<span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)}</span>` : '<span class="muted">—</span>'}</td>
@@ -933,10 +948,10 @@
         <div>${probs}
           ${x.dec ? `<div class="unitbox">💰 Recommended: <b>${unitsTxt(unitsFor(x))}</b><span class="muted"> · 1u = $${unitSize().toFixed(2)}</span></div>` : ''}
           <p class="note" style="margin-top:10px">${x.dec ? `<span class="edge ${x.ev < 0 ? 'neg' : ''}">${signPct(x.ev)} EV</span>` : ''} &nbsp;fair ${toAm(1 / x.fairP)} via ${esc(x.src)}${x.nBooks ? ` (${x.nBooks} books)` : ''}</p>
-          ${B365() ? `<div class="b365" style="margin-top:12px"><span>🎯 Bet at bet365 if odds are <b>${targetAm(x)}</b> or better</span>${priceInput(x)}</div>` : ''}
+          ${B365() ? `<div class="b365" style="margin-top:12px"><span>🎯 Bet at ${esc(MYB())} if odds are <b>${targetAm(x)}</b> or better</span>${priceInput(x)}</div>` : ''}
           ${isSus(x) ? '<div class="warnbox">⚠ Edge this big usually means a stale or mistaken line. Check news before betting.</div>' : ''}
           ${priceList ? `<h4 style="margin-top:14px">Best prices</h4><div>${priceList}</div>` : ''}
-          <div style="margin-top:14px">${x.dec ? '' : '<p class="note">No sportsbook price here: it goes in your slip at the fair price. Type your bet365 odds (above or in the slip) for the real edge.</p>'}<button class="btn primary" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓ In slip — remove' : '+ Add to slip'}</button></div>
+          <div style="margin-top:14px">${x.dec ? '' : '<p class="note">No sportsbook price here: it goes in your slip at the fair price. Type your ${esc(MYB())} odds (above or in the slip) for the real edge.</p>'}<button class="btn primary" data-add="${esc(x.id)}">${S.slip.includes(x.id) ? '✓ In slip — remove' : '+ Add to slip'}</button></div>
         </div>
         ${gameBlock}
       </div>`;
@@ -984,8 +999,10 @@
         return `<div class="howto">📅 <b>Monthly goal: stay on the free 500.</b> Used <b>${used}</b> of 500 · on pace to finish the month around <b>${Math.min(500, proj)}</b> · the daily build never spends past what's left, and The Odds API free plan simply stops (never bills) at 0.
           <div class="track" style="margin-top:8px;height:8px"><i style="width:${Math.min(100, used / 5)}%;background:var(--edge)"></i></div></div>`; })() : ''}
       ${card?.creditPlan ? `<div class="howto">🪙 <b>${card.creditPlan.left}</b> credits left · <b>${card.creditPlan.daysLeft}</b> days to go · daily pace <b>~${card.creditPlan.perDay}</b> · reserve for your refreshes <b>${card.creditPlan.reserve}</b>. The daily build spends more on big Saturdays and Sundays and less early in the week.</div>` : ''}
-      <label>My sportsbook <select id="sMyBook"><option value="bet365">bet365 (I type in prices)</option><option value="best">Best price across US books</option></select></label>
-      <label>Books I can bet <select id="sBooks"><option value="0">US books</option><option value="1" ${S.allBooks ? 'selected' : ''}>All books</option></select></label>
+      <label>Where I bet <select id="sBooks"><option value="us">🇺🇸 US books</option><option value="ca" ${S.region === 'ca' ? 'selected' : ''}>🇨🇦 Canadian books</option><option value="all" ${S.region === 'all' ? 'selected' : ''}>🌍 All books</option></select></label>
+      <p class="note" style="margin:-4px 0 4px">🇨🇦 Canadian books = the best price at FanDuel, DraftKings, BetMGM, Caesars, BetRivers, theScore Bet or Pinnacle (no offshore books). Use Bet99, Sports Interaction, PROLINE+ and the rest? Pick it under My sportsbook: you get fair odds and a target price, and you type in their price.</p>
+      <label>My sportsbook <select id="sMyBook"><option value="best">Best price at the books above (auto)</option>
+        <optgroup label="I type in the price (books the odds feed doesn't carry)">${TYPE_IN.map(b => `<option value="${esc(b)}">${esc(b)}${b === 'bet365' ? '' : ' 🇨🇦'}</option>`).join('')}</optgroup></select></label>
       <label>Bankroll ($) <input id="sBank" type="number" value="${esc(S.bankroll)}"></label>
       <label>Unit size ($) <input id="sUnit" type="number" min="0" step="0.5" value="${S.unit > 0 ? esc(S.unit) : ''}" placeholder="auto: 1% of bankroll ($${Math.max(1, S.bankroll / 100).toFixed(2)})"></label>
       <label>Kelly fraction <select id="sKelly">${[[0.1, '1/10'], [0.25, '1/4'], [0.5, '1/2']].map(([v, l]) => `<option value="${v}" ${S.kfrac === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
@@ -1005,7 +1022,7 @@
     const log = m => { const el = $('log'); if (el) { el.textContent += m + '\n'; el.scrollTop = 1e9; } };
     const get = async url => { const r = await fetch(url); if (!r.ok) throw new Error(r.status + ''); return { json: /\.csv(\?|$)/.test(url) ? await r.text() : await r.json(), headers: n => r.headers.get(n) }; };
     try {
-      const c = await E.buildCard({ get, key: S.key, budget: S.budget, allowAll: S.allBooks, log });
+      const c = await E.buildCard({ get, key: S.key, budget: S.budget, allowAll: bookMode(), log });
       card = c; store.set('liveCard', c); index(); render();
       log('✅ Done — card updated.');
     } catch (e) { log('❌ ' + e.message); }
@@ -1044,11 +1061,11 @@
       case 'clearSlip': S.slip = []; store.set('slip', []); render(); openSlip(); break;
       case 'dropLive': store.set('liveCard', null); try { localStorage.removeItem('edge.liveCard'); } catch (err) {} card = window.EDGE_CARD; index(); render(); closeAll(); break;
       case 'saveSet':
-        S.key = $('sKey').value.trim(); S.budget = Math.max(3, +$('sBudget').value || 8); S.allBooks = $('sBooks').value === '1';
+        S.key = $('sKey').value.trim(); S.budget = Math.max(3, +$('sBudget').value || 8); const oldRegion = S.region; S.region = $('sBooks').value; S.allBooks = S.region === 'all'; store.set('region', S.region);
         S.bankroll = +$('sBank').value || 500; S.kfrac = +$('sKelly').value; S.myBook = $('sMyBook').value; S.unit = Math.max(0, +$('sUnit').value || 0); store.set('unit', S.unit);
         ['key', 'allBooks', 'bankroll', 'kfrac', 'myBook'].forEach(k => store.set(k, S[k])); store.set('budget2', S.budget);
         store.set('theme', $('sTheme').value); applyTheme(); store.set('autoRefresh', $('sAuto').value === '1');
-        if (card) { E.applyBooks([...card.lines, ...card.props], S.allBooks); Object.values(byId).forEach(x => delete x._orig); applyPrices(); }
+        if (S.region !== oldRegion) { location.reload(); break; } // re-price everything cleanly for the new region
         closeAll(); render(); break;
       case 'buildBtn': {
         const src = $('bsrc').value, lg = $('blg').value;
