@@ -15,7 +15,7 @@
     slip: store.get('slip', []), bankroll: store.get('bankroll', 500), kfrac: store.get('kfrac', 0.25),
     key: store.get('key', ''), budget: store.get('budget2', 8), allBooks: store.get('allBooks', false),
     unit: store.get('unit', 0), day: 'ALL', time: 'ALL', team: 'ALL', glType: store.get('glType', 'ALL'),
-    myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), allPlayers: store.get('allPlayers', false), newsSec: store.get('newsSec', 'plays'), injOnly: false, bestOnly: store.get('bestOnly', false), prices: store.get('prices', {}), type: 'ALL', shown: 120,
+    myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), allPlayers: store.get('allPlayers', false), ladStart: store.get('ladStart', 10), newsSec: store.get('newsSec', 'plays'), injOnly: false, bestOnly: store.get('bestOnly', false), prices: store.get('prices', {}), type: 'ALL', shown: 120,
   };
   const B365 = () => S.myBook === 'bet365';
   const EDGE_BUFFER = 0.02; // target price = break-even + 2% EV
@@ -31,6 +31,8 @@
     if (!card) return;
     for (const x of [...card.lines, ...card.props]) byId[x.id] = x;
     for (const x of card.board || []) if (!byId[x.id]) byId[x.id] = x;
+    // locked picks (Pick / Parlay of the Day, ladder bet) stay findable even if their line moved off the board
+    for (const x of [card.potdSnap, ...(card.potdParlay?.snaps || []), ...(card.ladder?.snaps || [])]) if (x && !byId[x.id]) byId[x.id] = x;
     // Hide games that have already started from every list (slip legs, Pick of the Day and the Live tab
     // still find them through byId, so live tracking keeps working).
     const upcoming = x => !x.start || new Date(x.start) > Date.now();
@@ -137,7 +139,7 @@
   }
 
   // ---------- views ----------
-  const TABS = [['top', '🔥 Top Picks'], ['live', '🔴 Live'], ['money', '💰 Money Builder'], ['board', '🗂️ Bet Board'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['alts', '🪜 Alt Lines'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['news', '📰 News'], ['record', '📈 Record'], ['how', '📘 How it works']];
+  const TABS = [['top', '🔥 Top Picks'], ['live', '🔴 Live'], ['money', '💰 Money Builder'], ['climb', '🧗 12-Day Ladder'], ['board', '🗂️ Bet Board'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['alts', '🪜 Alt Lines'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['news', '📰 News'], ['record', '📈 Record'], ['how', '📘 How it works']];
   function renderTabs() {
     $('tabs').innerHTML = TABS.map(([k, l]) => [k, k === 'sheet' && B365() ? '📋 bet365 Sheet' : l]).map(([k, l]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
   }
@@ -218,6 +220,7 @@
   function settledRows(kind) {
     return H.map(h => {
       if (kind === 'potd' && h.potd) return { date: h.date, dec: h.potd.dec, p: h.potd.fairP, result: h.potd.result, label: h.potd.pick, actual: h.potd.actual, odds: toAm(h.potd.dec) };
+      if (kind === 'ladder' && h.ladder) return { date: h.date, dec: h.ladder.dec, p: h.ladder.p, result: h.ladder.result, label: h.ladder.legs.map(l => l.pick).join(' + '), legs: h.ladder.legs, odds: toAm(h.ladder.dec) };
       if (kind === 'parlay' && h.parlay) {
         const pay = h.parlay.legs.reduce((a, l) => a * (l.result === 'won' ? l.dec : 1), 1);
         return { date: h.date, dec: pay, p: h.parlay.p, result: h.parlay.result, label: h.parlay.legs.map(l => l.pick).join(' + '), legs: h.parlay.legs, odds: toAm(h.parlay.dec) };
@@ -234,14 +237,15 @@
   }
   const resDot = r => `<span class="rd ${esc(r.result)}" title="${esc(r.date)} · ${esc(r.label)}${r.actual ? ' · ' + esc(r.actual) : ''}">${r.result === 'won' ? '✓' : r.result === 'lost' ? '✕' : r.result === 'pending' ? '•' : '–'}</span>`;
   function recordStrip() {
-    const a = recordOf('potd'), b = recordOf('parlay');
+    const a = recordOf('potd'), b = recordOf('parlay'), c = recordOf('ladder');
     if (!a.rows.length && !b.rows.length) return '';
     const tile = (title, r) => `<div class="kpi"><div class="l">${title}</div>
       <div class="v">${r.done.length ? `${r.W}-${r.L}${r.P ? '-' + r.P : ''}` : '—'}</div>
       <div class="s">${r.done.length ? `<span style="color:${r.units >= 0 ? 'var(--edge)' : 'var(--bad)'}">${r.units >= 0 ? '+' : ''}${r.units.toFixed(2)}u</span> · hit ${pct(r.act ?? 0, 0)} vs ${pct(r.exp ?? 0, 0)} expected` : 'first result grades tomorrow morning'}</div>
       <div class="dots2">${r.rows.slice(0, 10).map(resDot).join('')}</div></div>`;
     return `<div class="sec"><h2>📈 Track record</h2><span>auto-graded from final box scores · 1 unit flat stakes · <a href="#" data-tab="record">full history →</a></span></div>
-      <div class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr))">${tile('⭐ Pick of the Day', a)}${tile('🎯 Parlay of the Day', b)}</div>`;
+      <div class="kpis" style="grid-template-columns:repeat(${c.rows.length ? 3 : 2},minmax(0,1fr))">${tile('⭐ Pick of the Day', a)}${tile('🎯 Parlay of the Day', b)}${c.rows.length ? tile('🧗 Ladder bet', c) : ''}</div>
+      <p class="note">🔒 Picks lock the moment they're posted: a later refresh can't swap a pick for a different one, so every loss counts.</p>`;
   }
   function clvStats() {
     const legs = H.flatMap(h => [...(h.clv || []), ...(h.potd?.type === 'line' ? [h.potd] : []), ...(h.parlay?.legs || []).filter(l => l.type === 'line')]);
@@ -270,6 +274,7 @@
       <div class="tbl"><div class="scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Pick</th><th>Odds</th><th>Win %</th><th>Result</th><th>Final</th></tr></thead><tbody>
       ${H.map(h => [
         h.potd ? `<tr><td>${esc(h.date.replace(/(\d{4})(\d\d)(\d\d)/, '$2/$3'))}</td><td>⭐ Pick</td><td><b>${esc(h.potd.pick)}</b><br><span class="muted">${esc(h.potd.game)}</span></td><td>${toAm(h.potd.dec)} <span class="muted">${esc(h.potd.book)}</span></td><td>${pct(h.potd.fairP, 0)}</td><td>${badge(h.potd.result)}</td><td class="muted">${esc(h.potd.actual || '')}</td></tr>` : '',
+        h.ladder ? `<tr><td>${esc(h.date.replace(/(\d{4})(\d\d)(\d\d)/, '$2/$3'))}</td><td>🧗 Ladder</td><td>${h.ladder.legs.map(l => `${badge(l.result).replace(/ (Won|Lost|Push|Void|Pending|n\/a)/, '')} ${esc(l.pick)} <span class="muted">${esc(l.actual || '')}</span>`).join('<br>')}</td><td>${toAm(h.ladder.dec)}</td><td>${pct(h.ladder.p, 0)}</td><td>${badge(h.ladder.result)}</td><td></td></tr>` : '',
         h.parlay ? `<tr><td>${esc(h.date.replace(/(\d{4})(\d\d)(\d\d)/, '$2/$3'))}</td><td>🎯 Parlay</td><td>${h.parlay.legs.map(l => `${badge(l.result).replace(/ (Won|Lost|Push|Void|Pending|n\/a)/, '')} ${esc(l.pick)} <span class="muted">${esc(l.actual || '')}</span>`).join('<br>')}</td><td>${toAm(h.parlay.dec)}</td><td>${pct(h.parlay.p, 0)}</td><td>${badge(h.parlay.result)}</td><td></td></tr>` : '',
       ].join('')).join('')}
       </tbody></table></div></div>`;
@@ -303,6 +308,42 @@
       return `<div class="rung"><div class="amt">$${amt}</div><div class="track" style="height:8px"><i style="width:${chance * 100}%;background:var(--edge)"></i></div>
         <div class="muted" style="font-size:12px">${pct(chance, chance < 0.1 ? 1 : 0)} to get here · ${n} win${n > 1 ? 's' : ''} in a row</div></div>`;
     }).join('')}</div>`;
+  }
+  // ---------- 🧗 12-Day Ladder: one ~2x bet a day, roll it all over, a loss sends you back to Day 1 ----------
+  function viewClimb() {
+    const N = E.LADDER_DAYS, st = E.ladderState(H, +S.ladStart || 10), lad = card.ladder;
+    const fmt$ = v => v >= 1000 ? '$' + Math.round(v).toLocaleString() : '$' + v.toFixed(2).replace(/\.00$/, '');
+    const avgDec = lad?.dec || 1.95, avgP = lad?.p || 0.52;
+    // amounts for this attempt: settled wins so far, then projected at today's odds
+    const cur = st.log.filter(r => r.result === 'won' || r.result === 'push' || r.result === 'void').slice(0, st.step - 1).reverse();
+    const steps = Array.from({ length: N }, (_, i) => {
+      const n = i + 1, done = n < st.step, now = n === st.step;
+      const amt = done ? null : st.roll * avgDec ** (n - st.step + 1);
+      return `<div class="lstep ${done ? 'done' : now ? 'now' : ''}"><small>Day ${n}</small><b>${done ? '✓' : fmt$(amt)}</b></div>`;
+    }).join('');
+    const finish = avgP ** (N - st.step + 1);
+    const todayRow = st.log.find(r => r.date === H.find(h => h.ladder)?.date && r.result === 'pending');
+    const lastLoss = st.log.find(r => r.result === 'lost');
+    const tiles = [
+      ['Current day', `${st.step} / ${N}`, `${fmt$(st.roll)} riding today`],
+      ['Ladders completed', st.completed, st.banked ? `${fmt$(st.banked)} banked` : `finish = ${fmt$((+S.ladStart || 10) * avgDec ** N)} from ${fmt$(+S.ladStart || 10)}`],
+      ['Attempts', st.attempts, `every loss starts a new one`],
+      ['Ladder record', `${st.W}-${st.L}${st.P ? '-' + st.P : ''}`, `best run: <b>${st.best}</b> day${st.best === 1 ? '' : 's'} in a row`],
+    ];
+    return `<div class="sec"><h2>🧗 12-Day Ladder</h2><span>one bet a day that roughly doubles your money · win 12 in a row to finish · a loss sends you back to Day 1</span></div>
+      <div class="howto">🎯 <b>The rules:</b> start with ${fmt$(+S.ladStart || 10)} <span class="muted">(change it: <input id="ladStart" type="number" min="1" step="1" value="${esc(S.ladStart)}" style="width:70px">)</span>. Each day the app picks <b>one bet paying about 2x</b> (-125 to +110), either a single or 2 likely legs stacked. Roll the whole amount onto the next day's bet. 12 wins = ${fmt$((+S.ladStart || 10) * avgDec ** N)}. It's a long shot by design: even at ${pct(avgP, 0)} a day, finishing all 12 from Day 1 is about <b>${pct(avgP ** N, 2)}</b>. Picks lock when posted and are graded from box scores, so every loss counts.</div>
+      <div class="kpis" style="grid-template-columns:repeat(4,minmax(0,1fr))">${tiles.map(([l, v, s2]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s2}</div></div>`).join('')}</div>
+      <div class="lsteps">${steps}</div>
+      <p class="note">From Day ${st.step}, the chance to finish all ${N} at today's odds is about <b>${pct(finish, finish < 0.01 ? 2 : 1)}</b>.${lastLoss ? ` Last reset: ${esc(lastLoss.date.replace(/(\d{4})(\d\d)(\d\d)/, '$2/$3'))} (lost on Day ${lastLoss.step}).` : ''}</p>
+      <div class="sec"><h2>Today's ladder bet · Day ${st.step}</h2><span>${lad ? `${toAm(lad.dec)} · ${fmt$(st.roll)} pays ${fmt$(st.roll * lad.dec)} · ${pct(lad.p, 0)} to hit · ${signPct(lad.ev)} EV` : ''}</span></div>
+      ${lad ? `<div class="pgrid">${parlayCard({ name: `Ladder · Day ${st.step}`, emoji: '🧗', blurb: lad.legs.length > 1 ? 'Two likely legs stacked to pay about 2x' : 'One bet paying about 2x', legs: lad.legs }, true)}</div>`
+        : empty('No bet in the 2x range with an edge today. The ladder waits: skip today and roll tomorrow (no loss, no reset).')}
+      <div class="sec"><h2>Ladder log</h2><span>every day, graded automatically</span></div>
+      ${st.log.length ? `<div class="tbl"><div class="scroll"><table><thead><tr><th>Date</th><th>Day</th><th>Bet</th><th>Odds</th><th>Riding</th><th>Result</th><th>After</th></tr></thead><tbody>
+        ${st.log.map(r => `<tr><td>${esc(r.date.replace(/(\d{4})(\d\d)(\d\d)/, '$2/$3'))}</td><td><b>${r.step}</b>/${N}</td><td>${r.picks.map(esc).join('<br>')}</td><td>${toAm(r.dec)}</td><td>${fmt$(r.roll)}</td>
+          <td><span class="res ${esc(r.result)}">${r.result === 'won' ? '✅ Won' : r.result === 'lost' ? '❌ Lost' : r.result === 'pending' ? '⏳ Pending' : '➖ ' + esc(r.result)}</span></td>
+          <td>${r.result === 'won' ? `<b style="color:var(--edge)">${fmt$(r.after)}</b>${r.banked ? ' 🏆 ladder done!' : ''}` : r.result === 'lost' ? '<span style="color:var(--bad)">💥 back to Day 1</span>' : r.result === 'pending' ? '' : fmt$(r.after)}</td></tr>`).join('')}
+      </tbody></table></div></div>` : empty('The ladder starts with today\'s bet. Results show up here after the games are graded.')}`;
   }
   function viewMoney() {
     const { singles, combos } = doublers();
@@ -819,8 +860,8 @@
         <p>The daily GitHub Action writes <code>data/latest.js</code>. Or open ⚙️ Settings, paste your Odds API key and hit ↻ Live refresh.</p>`);
       return;
     }
-    const v = { top: viewTop, alts: viewAlts, board: viewBoard, live: viewLive, money: viewMoney, record: viewRecord, news: viewNews, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
-    renderFilters(S.tab === 'board' ? [...card.lines, ...card.props] : S.tab === 'news' ? newsItems() : S.tab === 'how' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' || S.tab === 'live' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? (S.allPlayers ? allPlayerProps() : card.props) : S.tab === 'alts' ? altProps() : S.tab === 'lines' ? (card.board || []).filter(x => x.type === 'line' && !x.alt) : [...card.lines, ...card.props], { markets: S.tab === 'props' || S.tab === 'alts', sheet: S.tab === 'sheet' });
+    const v = { top: viewTop, alts: viewAlts, board: viewBoard, live: viewLive, money: viewMoney, climb: viewClimb, record: viewRecord, news: viewNews, sheet: viewSheet, props: viewProps, lines: viewLines, parlays: viewParlays, how: viewHow }[S.tab] || viewTop;
+    renderFilters(S.tab === 'board' ? [...card.lines, ...card.props] : S.tab === 'news' ? newsItems() : S.tab === 'how' || S.tab === 'climb' || S.tab === 'parlays' || S.tab === 'record' || S.tab === 'money' || S.tab === 'live' ? null : S.tab === 'sheet' ? (card.board || []) : S.tab === 'props' ? (S.allPlayers ? allPlayerProps() : card.props) : S.tab === 'alts' ? altProps() : S.tab === 'lines' ? (card.board || []).filter(x => x.type === 'line' && !x.alt) : [...card.lines, ...card.props], { markets: S.tab === 'props' || S.tab === 'alts', sheet: S.tab === 'sheet' });
     $('view').innerHTML = v();
   }
 
@@ -996,6 +1037,7 @@
   document.addEventListener('change', e => {
     if (e.target.id === 'sort') { S.sort = e.target.value; render(); }
     if (e.target.id === 'type') { S.type = e.target.value; S.shown = 120; render(); }
+    if (e.target.id === 'ladStart') { S.ladStart = Math.max(1, +e.target.value || 10); store.set('ladStart', S.ladStart); render(); }
     if (e.target.id === 'fDay') { S.day = e.target.value; S.time = 'ALL'; S.shown = 120; render(); }
     if (e.target.id === 'fTime') { S.time = e.target.value; S.shown = 120; render(); }
     if (e.target.id === 'fTeam') { S.team = e.target.value; S.shown = 120; render(); }

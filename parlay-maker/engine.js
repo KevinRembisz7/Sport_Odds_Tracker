@@ -1111,6 +1111,7 @@
     const potd = pickOfDay([...lines, ...props]);
     card.potd = potd ? potd.id : null;
     card.potdParlay = parlayOfDay([...lines, ...props]);
+    card.ladder = ladderOfDay([...lines, ...props], card.board);
     card.news = await newsFor(card, getJSON).catch(() => ({}));
     card.lineups = await lineupsFor(card, getJSON, nowD).catch(() => ({}));
     card.newsAt = new Date().toISOString();
@@ -1139,6 +1140,46 @@
       if (best) return { legs: best.legs.map(l => l.id), dec: best.s.dec, p: best.s.p, ev: best.s.ev };
     }
     return null;
+  }
+
+  // 🧗 12-Day Ladder: one bet a day that roughly doubles the roll (decimal 1.80–2.10, i.e. about -125 to +110).
+  // A single +EV bet in that band, or a 2-leg parlay of likely legs (≥60% each, different games) that lands there.
+  // Ranked by win chance first (it has to cash 12 days in a row), then edge.
+  const LADDER_MIN = 1.80, LADDER_MAX = 2.10, LADDER_DAYS = 12;
+  function ladderOfDay(items, board = []) {
+    // +EV picks first, plus any sportsbook-priced board line at fair or better (0%+ edge), so there's a bet most days
+    const seen = new Set(items.map(x => x.id));
+    const all = [...items, ...board.filter(x => x.dec && !x.kalshi && !x.espnLine && !(x.alt && x.type === 'prop') && !seen.has(x.id))];
+    const pool = all.filter(x => x.dec && x.fairP && x.ev >= 0 && x.ev < (x.type === 'prop' ? PROP_STALE : STALE) && (x.vibe?.score || 0) >= 0)
+      .sort((a, b) => (b.ev + (b.vibe?.score || 0) * 0.01) - (a.ev + (a.vibe?.score || 0) * 0.01));
+    const band = d => d >= LADDER_MIN && d <= LADDER_MAX;
+    const hitOk = x => !x.vibe?.hit || x.vibe.hit.n < 4 || x.vibe.hit.hits / x.vibe.hit.n >= 0.5;
+    const singles = pool.filter(x => band(x.dec) && hitOk(x)).map(x => ({ legs: [x], dec: x.dec, p: x.fairP, ev: x.ev }));
+    const likely = pool.filter(x => x.fairP >= 0.6 && hitOk(x)).sort((a, b) => b.fairP - a.fairP);
+    const pairs = buildParlays(likely, 2, 'hit').filter(b => band(b.s.dec) && b.s.ev >= 0).slice(0, 40)
+      .map(b => ({ legs: b.legs, dec: b.s.dec, p: b.s.p, ev: b.s.ev }));
+    const score = c => c.p + Math.min(c.ev, 0.1) * 0.5 + c.legs.reduce((a, l) => a + (l.vibe?.score || 0), 0) * 0.005;
+    const best = [...singles, ...pairs].sort((a, b) => score(b) - score(a))[0];
+    return best ? { legs: best.legs.map(l => l.id), dec: best.dec, p: best.p, ev: best.ev } : null;
+  }
+  // Walk the graded history oldest → newest: a win moves up a step (roll × odds), a loss sends you back to Day 1,
+  // push/void stays put, and clearing Day 12 banks the ladder and starts a fresh one.
+  function ladderState(history, start = 10) {
+    const days = [...history].filter(h => h.ladder).sort((a, b) => a.date.localeCompare(b.date));
+    const st = { step: 1, roll: start, start, attempts: 1, completed: 0, best: 0, run: 0, W: 0, L: 0, P: 0, log: [], banked: 0 };
+    for (const h of days) {
+      const r = h.ladder.result, row = { date: h.date, step: st.step, dec: h.ladder.dec, result: r, roll: st.roll, picks: h.ladder.legs.map(l => l.pick) };
+      if (r === 'won') {
+        st.W++; st.run++; st.best = Math.max(st.best, st.run); st.roll = +(st.roll * h.ladder.dec).toFixed(2);
+        row.after = st.roll;
+        if (st.step >= LADDER_DAYS) { st.completed++; st.banked += st.roll; row.banked = true; st.step = 1; st.roll = start; st.run = 0; st.attempts++; }
+        else st.step++;
+      } else if (r === 'lost') { st.L++; row.after = 0; st.step = 1; st.roll = start; st.run = 0; st.attempts++; }
+      else if (r === 'push' || r === 'void') { st.P++; row.after = st.roll; }
+      st.log.push(row);
+    }
+    st.log.reverse();
+    return st;
   }
 
   // ---------------- extra free data: weather, prediction markets, NHL goalies, nflverse, MLB probables ----------------
@@ -1670,28 +1711,36 @@
   async function updateHistory(history, card, get, log = () => {}) {
     const cache = {}, getJSON = url => cache[url] ||= get(url).then(r => r.json).catch(() => null), now = Date.now();
     for (const h of history) {
-      const legs = [h.potd, ...(h.parlay?.legs || [])].filter(Boolean);
+      const legs = [h.potd, ...(h.parlay?.legs || []), ...(h.ladder?.legs || [])].filter(Boolean);
       for (const l of legs) if ((l.result === 'pending' || !l.result) && new Date(l.start) < now - 3.5 * 36e5) {
         Object.assign(l, await gradeLeg(l, getJSON).catch(() => ({ result: 'pending' })));
         if (l.result === 'pending' && now - new Date(l.start) > 4 * 864e5) l.result = 'ungraded';
       }
       if (h.parlay) h.parlay.result = parlayResult(h.parlay.legs);
+      if (h.ladder) h.ladder.result = parlayResult(h.ladder.legs);
       for (const l of [...legs, ...(h.clv || [])]) if (l.type === 'line' && l.close == null && new Date(l.start) < now) {
         const cl = await closingFor(l, getJSON).catch(() => null);
         if (cl) l.close = cl; else if (now - new Date(l.start) > 3 * 864e5) l.close = false;
       }
     }
-    const byId = Object.fromEntries([...card.lines, ...card.props].map(x => [x.id, x]));
-    const potd = byId[card.potd], par = card.potdParlay;
-    if (potd || par) {
-      const date = etDate(card.generatedAt);
+    const byId = Object.fromEntries([...(card.board || []), ...card.lines, ...card.props].map(x => [x.id, x]));
+    const potd = byId[card.potd], par = card.potdParlay, lad = card.ladder;
+    const date = etDate(card.generatedAt);
+    if (potd || par || lad) {
       const clvLegs = card.lines.filter(x => x.dec && !x.alt && !x.espnLine && x.ev >= 0.01 && x.ev < STALE).slice(0, 25).map(snap);
-      const entry = { date, clv: clvLegs, potd: potd ? snap(potd) : null,
-        parlay: par ? { legs: par.legs.map(id => snap(byId[id])), dec: par.dec, p: par.p, ev: par.ev, result: 'pending' } : null };
+      const multi = m => m && m.legs.every(id => byId[id]) ? { legs: m.legs.map(id => snap(byId[id])), dec: m.dec, p: m.p, ev: m.ev, result: 'pending' } : null;
+      const entry = { date, clv: clvLegs, potd: potd ? snap(potd) : null, parlay: multi(par), ladder: multi(lad) };
       const i = history.findIndex(h => h.date === date);
-      const started = h => [h.potd, ...(h.parlay?.legs || [])].some(l => l && new Date(l.start) < now);
+      // LOCKED: once a pick is posted it's the one that gets graded, win or lose. A later refresh can only fill a slot
+      // that was empty (e.g. no parlay this morning), never swap a posted pick for a different one.
       if (i < 0) history.push(entry);
-      else if (!started(history[i])) history[i] = entry;
+      else for (const k of ['potd', 'parlay', 'ladder']) if (!history[i][k] && entry[k]) history[i][k] = entry[k];
+    }
+    // show the locked picks on the card, so the site and the record always match
+    const today = history.find(h => h.date === date);
+    if (today) {
+      card.potd = today.potd?.id ?? card.potd; card.potdSnap = today.potd || null;
+      for (const [k, ck] of [['parlay', 'potdParlay'], ['ladder', 'ladder']]) if (today[k]) card[ck] = { legs: today[k].legs.map(l => l.id), dec: today[k].dec, p: today[k].p, ev: today[k].ev, snaps: today[k].legs };
     }
     history.sort((a, b) => b.date.localeCompare(a.date));
     log(`history: ${history.length} days`);
@@ -1701,7 +1750,7 @@
   const Engine = { SPORTS, PROP_STATS, STALE, PROP_STALE, toDec, toAm, pct, esc, devig, norm, normName,
     legsFromEvents, propsFromEvent, oneSidedFromEvent, altsFromEvent, altPropsFromEvent, ladderModel, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
     parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
-    pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult, liveStatus, closingFor, boxRows,
+    pickOfDay, parlayOfDay, ladderOfDay, ladderState, LADDER_DAYS, gradeLeg, updateHistory, parlayResult, liveStatus, closingFor, boxRows,
     extraNotes, weatherFor, marketsFor, nhlGoalies, nflverse, makeApiFootball, apiFootballNotes, kalshiProps, kalshiNote, topUpProps, newsFor, lineupsFor, INJ_RX, injuryPlays };
   root.Engine = Engine;
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;
