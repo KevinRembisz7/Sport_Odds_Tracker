@@ -858,8 +858,9 @@
     const out = {};
     const kindOf = g => SPORTS[g.sport]?.espn?.startsWith('soccer/') ? 'soc' : g.kind;
     const games = Object.entries(card.games || {}).map(([k, g]) => [k, { ...g, kind: kindOf(g) }])
-      .filter(([, g]) => g.sport && g.start && new Date(g.start) > now && ['bb', 'soc', 'hk'].includes(g.kind) && !/ncaab/.test(g.sport))
-      .sort((a, b) => a[1].start.localeCompare(b[1].start)).slice(0, 40);
+      .filter(([, g]) => g.sport && g.start && new Date(g.start) > now && (['bb', 'soc', 'hk'].includes(g.kind) || g.sport === 'americanfootball_nfl') && !/ncaab/.test(g.sport))
+      // pro leagues first so NBA / NHL / NFL always get covered, then soonest first
+      .sort((a, b) => (SPORTS[a[1].sport].pri - SPORTS[b[1].sport].pri) || a[1].start.localeCompare(b[1].start)).slice(0, 70);
     const startersOf = (sum, teamId, kind) => {
       if (kind === 'soc') {
         const r = (sum?.rosters || []).find(t => t.team?.id === teamId);
@@ -867,6 +868,24 @@
         return xi.length ? { players: xi, formation: r.formation || '' } : null;
       }
       const t = (sum?.boxscore?.players || []).find(t => t.team?.id === teamId);
+      if (kind === 'fb') {
+        // NFL box scores have no starter flag: QB = most attempts, RB1 = most carries, top 3 targets = main receivers
+        const cat = n => (t?.statistics || []).find(c => c.name === n);
+        const top = (c, col, k, skip = new Set()) => {
+          if (!c) return [];
+          const i = (c.labels || []).indexOf(col);
+          return [...(c.athletes || [])].filter(a => !skip.has(a.athlete?.id))
+            .sort((a, b) => parseFloat(String(b.stats?.[i] ?? '0').split('/').pop()) - parseFloat(String(a.stats?.[i] ?? '0').split('/').pop())).slice(0, k);
+        };
+        const P = cat('passing'), R = cat('rushing'), W = cat('receiving');
+        const qb = top(P, 'C/ATT', 1), rb = top(R, 'CAR', 1, new Set(qb.map(a => a.athlete?.id)));
+        const wr = top(W, 'TGTS', 3, new Set(rb.map(a => a.athlete?.id)));
+        const row = (a, pos, c, cols) => ({ n: a.athlete?.displayName, pos, id: a.athlete?.id,
+          ln: cols.map(([lab, suf]) => { const i = c.labels.indexOf(lab); return i >= 0 ? `${a.stats[i]}${suf}` : ''; }).filter(Boolean).join(' · ') });
+        const st = [...qb.map(a => row(a, 'QB', P, [['C/ATT', ''], ['YDS', ' yds']])), ...rb.map(a => row(a, 'RB', R, [['CAR', ' car'], ['YDS', ' yds']])),
+          ...wr.map(a => row(a, 'REC', W, [['TGTS', ' tgt'], ['YDS', ' yds']]))];
+        return st.length ? { players: st } : null;
+      }
       const st = (t?.statistics?.[0]?.athletes || []).filter(a => a.starter).map(a => ({ n: a.athlete?.displayName, pos: a.athlete?.position?.abbreviation || '', id: a.athlete?.id }));
       return st.length ? { players: st } : null;
     };
@@ -891,7 +910,7 @@
           if (!lu) continue;
           const injBy = Object.fromEntries((t.injuries || []).map(p => [p.id, p]));
           lu.players = lu.players.map(p => injBy[p.id] ? { ...p, st: injBy[p.id].status, why: injBy[p.id].type } : p);
-          L[side] = { status, ...lu };
+          L[side] = { status, ...lu, ...(g.kind === 'fb' ? { kind: 'fb' } : {}) };
         }
       }
       if (L.home || L.away || L.goalies) out[eid] = L;

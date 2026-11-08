@@ -689,9 +689,9 @@
   const stTone = st => /^out|injured reserve|suspen/i.test(st || '') ? 'out' : /doubt/i.test(st || '') ? 'doubt' : st ? 'q' : '';
   function lineupSide(t, L, gid) {
     if (!L) return `<div class="lu"><div class="luh">${t.logo ? `<img src="${esc(t.logo)}" alt="" loading="lazy" onerror="this.remove()">` : ''}<b>${esc(t.abbr || t.name)}</b></div><p class="muted" style="font-size:12px">No lineup yet</p></div>`;
-    const badge = L.status === 'confirmed' ? '<span class="lub ok">✅ Confirmed</span>' : `<span class="lub">🔮 Projected${L.from ? ` · last game ${new Date(L.from).toLocaleDateString([], { month: 'short', day: 'numeric' })}` : ''}</span>`;
+    const badge = L.status === 'confirmed' ? '<span class="lub ok">✅ Confirmed</span>' : `<span class="lub">🔮 ${L.kind === 'fb' ? 'Key players' : 'Projected'}${L.from ? ` · last game ${new Date(L.from).toLocaleDateString([], { month: 'short', day: 'numeric' })}` : ''}</span>`;
     return `<div class="lu"><div class="luh">${t.logo ? `<img src="${esc(t.logo)}" alt="" loading="lazy" onerror="this.remove()">` : ''}<b>${esc(t.abbr || t.name)}</b>${L.formation ? `<span class="muted">${esc(L.formation)}</span>` : ''}${badge}</div>
-      <ul>${L.players.map(p => `<li class="${stTone(p.st)}"><span class="pos">${esc(p.pos)}</span><span class="n">${esc(p.n)}</span>${p.st ? `<span class="st">${esc(p.st)}${p.why ? ' · ' + esc(p.why) : ''}</span>` : ''}</li>`).join('')}</ul></div>`;
+      <ul>${L.players.map(p => `<li class="${stTone(p.st)}"><span class="pos">${esc(p.pos)}</span><span class="n">${esc(p.n)}</span>${p.ln ? `<span class="muted" style="font-size:11px">${esc(p.ln)}</span>` : ''}${p.st ? `<span class="st">${esc(p.st)}${p.why ? ' · ' + esc(p.why) : ''}</span>` : ''}</li>`).join('')}</ul></div>`;
   }
   function injuryBlock(t) {
     const key = (t.injuries || []).filter(p => stTone(p.status));
