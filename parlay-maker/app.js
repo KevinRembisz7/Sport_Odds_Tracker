@@ -147,7 +147,23 @@
   const TABS = [['top', '🔥 Top Picks'], ['live', '🔴 Live'], ['money', '💰 Money Builder'], ['climb', '🧗 12-Day Ladder'], ['board', '🗂️ Bet Board'], ['sheet', '📋 Fair Odds'], ['props', '🎯 Player Props'], ['alts', '🪜 Alt Lines'], ['lines', '📊 Game Lines'], ['parlays', '🧮 Parlays'], ['news', '📰 News'], ['record', '📈 Record'], ['how', '📘 How it works']];
   function renderTabs() {
     $('tabs').innerHTML = TABS.map(([k, l]) => [k, k === 'sheet' && B365() ? '📋 bet365 Sheet' : l]).map(([k, l]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${l}</button>`).join('');
+    requestAnimationFrame(() => { $('tabs').querySelector('.tab.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); tabArrows(); });
   }
+  // ◀ ▶ arrows for the tab bar (mice can't swipe sideways); shown only when there are tabs hidden off that edge
+  function tabArrows() {
+    const t = $('tabs'), w = t?.parentElement; if (!t || !w) return;
+    const canL = t.scrollLeft > 4, canR = t.scrollLeft + t.clientWidth < t.scrollWidth - 4;
+    $('tabL').hidden = !canL; $('tabR').hidden = !canR;
+    w.classList.toggle('canL', canL); w.classList.toggle('canR', canR);
+  }
+  (function setupTabArrows() {
+    const t = $('tabs'); if (!t) return;
+    const go = dir => t.scrollBy({ left: dir * Math.max(200, t.clientWidth * 0.7), behavior: 'smooth' });
+    $('tabL').addEventListener('click', () => go(-1)); $('tabR').addEventListener('click', () => go(1));
+    t.addEventListener('scroll', tabArrows, { passive: true }); window.addEventListener('resize', tabArrows);
+    // a normal mouse wheel scrolls the tab bar sideways while the pointer is over it
+    t.addEventListener('wheel', e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && t.scrollWidth > t.clientWidth) { t.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false });
+  })();
   function leagues(items) { return ['ALL', ...new Set(items.map(x => x.lg))]; }
   const dayKey = iso => iso ? new Date(iso).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) : '';
   const timeKey = iso => iso ? new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
