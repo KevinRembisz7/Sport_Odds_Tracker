@@ -62,7 +62,7 @@ const get = async (url, extraHeaders = {}) => {
   const card = await Engine.buildCard({
     get, key, apiFootballKey: process.env.API_FOOTBALL_KEY,
     budget: opt('--budget', process.env.DAILY_BUDGET || 'auto'),
-    allowAll: args.includes('--all-books'),
+    books: args.includes('--all-books') ? 'all' : opt('--books', process.env.BOOKS_REGION || 'ca'), // Canadian books by default
     log: m => console.log('·', m),
   });
   fs.mkdirSync(out, { recursive: true });

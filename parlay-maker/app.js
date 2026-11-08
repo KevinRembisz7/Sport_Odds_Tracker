@@ -13,7 +13,7 @@
   const S = {
     tab: store.get('tab', 'top'), lg: 'ALL', market: 'ALL', q: '', sort: 'ev',
     slip: store.get('slip', []), bankroll: store.get('bankroll', 500), kfrac: store.get('kfrac', 0.25),
-    key: store.get('key', ''), budget: store.get('budget2', 8), allBooks: store.get('allBooks', false), region: store.get('region', store.get('allBooks', false) ? 'all' : 'us'),
+    key: store.get('key', ''), budget: store.get('budget2', 8), allBooks: store.get('allBooks', false), region: store.get('region', store.get('allBooks', false) ? 'all' : 'ca'),
     unit: store.get('unit', 0), day: 'ALL', time: 'ALL', team: 'ALL', glType: store.get('glType', 'ALL'),
     myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), allPlayers: store.get('allPlayers', false), ladStart: store.get('ladStart', 10), newsSec: store.get('newsSec', 'plays'), injOnly: false, bestOnly: store.get('bestOnly', false), prices: store.get('prices', {}), type: 'ALL', shown: 120,
   };
@@ -49,15 +49,18 @@
     const upcoming = x => !x.start || new Date(x.start) > Date.now();
     card.lines = card.lines.filter(upcoming); card.props = card.props.filter(upcoming);
     if (card.board) card.board = card.board.filter(upcoming);
-    if (S.region === 'ca') useCanada();
+    useRegion();
     applyPrices();
     S.slip = S.slip.filter(id => byId[id]);
   }
-  // 🇨🇦 Canada: best price only from books licensed in Canada; anything that's no longer +EV drops off the pick lists
-  function useCanada() {
-    if (card._ca) return; card._ca = true;
-    E.applyBooks([...card.lines, ...card.props], 'ca');
-    for (const x of card.board || []) if (x.caDec !== undefined && !x.prices) { x.dec = x.caDec || null; x.book = x.caBook || ''; x.ev = x.dec ? x.fairP * x.dec - 1 : null; }
+  // Price everything for the viewer's region: 🇨🇦 Canadian books (default), 🇺🇸 US books or 🌍 all. The card carries
+  // every book's price (lines / props) and the best CA + US price (board), so this needs no extra API calls.
+  // Anything that isn't +EV in your region drops off the pick lists.
+  function useRegion() {
+    if (card._region === S.region) return; card._region = S.region;
+    E.applyBooks([...card.lines, ...card.props], bookMode());
+    const k = S.region === 'ca' ? ['caDec', 'caBook'] : S.region === 'us' ? ['usDec', 'usBook'] : null;
+    if (k) for (const x of card.board || []) if (x[k[0]] !== undefined && !x.prices) { x.dec = x[k[0]] || null; x.book = x[k[1]] || ''; x.ev = x.dec ? x.fairP * x.dec - 1 : null; }
     const keep = x => x.dec && x.ev >= (x.minEdge ?? 0.005);
     card.lines = card.lines.filter(keep); card.props = card.props.filter(keep);
   }
@@ -999,7 +1002,7 @@
         return `<div class="howto">📅 <b>Monthly goal: stay on the free 500.</b> Used <b>${used}</b> of 500 · on pace to finish the month around <b>${Math.min(500, proj)}</b> · the daily build never spends past what's left, and The Odds API free plan simply stops (never bills) at 0.
           <div class="track" style="margin-top:8px;height:8px"><i style="width:${Math.min(100, used / 5)}%;background:var(--edge)"></i></div></div>`; })() : ''}
       ${card?.creditPlan ? `<div class="howto">🪙 <b>${card.creditPlan.left}</b> credits left · <b>${card.creditPlan.daysLeft}</b> days to go · daily pace <b>~${card.creditPlan.perDay}</b> · reserve for your refreshes <b>${card.creditPlan.reserve}</b>. The daily build spends more on big Saturdays and Sundays and less early in the week.</div>` : ''}
-      <label>Where I bet <select id="sBooks"><option value="us">🇺🇸 US books</option><option value="ca" ${S.region === 'ca' ? 'selected' : ''}>🇨🇦 Canadian books</option><option value="all" ${S.region === 'all' ? 'selected' : ''}>🌍 All books</option></select></label>
+      <label>Where I bet <select id="sBooks"><option value="ca">🇨🇦 Canadian books (default)</option><option value="us" ${S.region === 'us' ? 'selected' : ''}>🇺🇸 US books</option><option value="all" ${S.region === 'all' ? 'selected' : ''}>🌍 All books</option></select></label>
       <p class="note" style="margin:-4px 0 4px">🇨🇦 Canadian books = the best price at FanDuel, DraftKings, BetMGM, Caesars, BetRivers, theScore Bet or Pinnacle (no offshore books). Use Bet99, Sports Interaction, PROLINE+ and the rest? Pick it under My sportsbook: you get fair odds and a target price, and you type in their price.</p>
       <label>My sportsbook <select id="sMyBook"><option value="best">Best price at the books above (auto)</option>
         <optgroup label="I type in the price (books the odds feed doesn't carry)">${TYPE_IN.map(b => `<option value="${esc(b)}">${esc(b)}${b === 'bet365' ? '' : ' 🇨🇦'}</option>`).join('')}</optgroup></select></label>
@@ -1022,7 +1025,7 @@
     const log = m => { const el = $('log'); if (el) { el.textContent += m + '\n'; el.scrollTop = 1e9; } };
     const get = async url => { const r = await fetch(url); if (!r.ok) throw new Error(r.status + ''); return { json: /\.csv(\?|$)/.test(url) ? await r.text() : await r.json(), headers: n => r.headers.get(n) }; };
     try {
-      const c = await E.buildCard({ get, key: S.key, budget: S.budget, allowAll: bookMode(), log });
+      const c = await E.buildCard({ get, key: S.key, budget: S.budget, books: S.region, log });
       card = c; store.set('liveCard', c); index(); render();
       log('✅ Done — card updated.');
     } catch (e) { log('❌ ' + e.message); }

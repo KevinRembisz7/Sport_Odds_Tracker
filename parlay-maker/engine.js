@@ -322,14 +322,16 @@
 
   // mode: false = US books, true = every book, 'ca' = Canadian books. Also stores the best Canadian price on every item
   // (caDec / caBook) so the site can switch to Canada without re-pulling odds.
+  // which books price the card: 'ca' (default) = Canadian-licensed books, 'us', or 'all'; legacy allowAll: true = all
+  const bookMode = o => o.allowAll === true || o.books === 'all' ? true : o.books === 'us' ? false : 'ca';
   function applyBooks(items, mode) {
     const ok = mode === 'ca' ? k => CA_BOOKS.test(k) : mode ? () => true : k => US_BOOKS.test(k);
     for (const l of items) {
       if (!l.prices) continue;
       const sorted = [...l.prices].sort((a, b) => b.dec - a.dec);
-      const best = sorted.find(p => ok(p.key)), ca = sorted.find(p => CA_BOOKS.test(p.key));
+      const best = sorted.find(p => ok(p.key)), ca = sorted.find(p => CA_BOOKS.test(p.key)), us = sorted.find(p => US_BOOKS.test(p.key));
       l.dec = best?.dec ?? null; l.book = best?.title ?? ''; l.ev = best ? l.fairP * best.dec - 1 : -1;
-      l.caDec = ca?.dec ?? 0; l.caBook = ca?.title ?? '';
+      l.caDec = ca?.dec ?? 0; l.caBook = ca?.title ?? ''; l.usDec = us?.dec ?? 0; l.usBook = us?.title ?? '';
     }
     return items;
   }
@@ -610,7 +612,8 @@
 
   // ---------------- daily pipeline ----------------
   async function buildCard(opts) {
-    const { get, key, budget = 'auto', log = () => {}, propWindowH = 30, lineWindowH = 30, allowAll = false, maxProps = 80, maxLines = 60 } = opts;
+    const { get, key, budget = 'auto', log = () => {}, propWindowH = 30, lineWindowH = 30, maxProps = 80, maxLines = 60 } = opts;
+    const books = bookMode(opts);
     const odds = q => get(`https://api.the-odds-api.com/v4${q}${q.includes('?') ? '&' : '?'}apiKey=${encodeURIComponent(key)}`);
     let left = null, used = 0;
     const track = h => { const l = parseInt(h('x-requests-remaining')); if (!isNaN(l)) left = l; used += parseInt(h('x-requests-last')) || 0; };
@@ -732,12 +735,13 @@
       } catch (e) { log(`${s} lines failed: ${e.message}`); }
     }
 
-    applyBooks(lines, allowAll); applyBooks(props, allowAll);
+    applyBooks(lines, books); applyBooks(props, books);
     // Full fair-odds board (every line + prop, +EV or not) for people pricing a book we can't pull, e.g. bet365.
     const keep = BOARD_KEEP;
     card.board = [...lines, ...props].map(x => Object.fromEntries(keep.filter(k => x[k] != null).map(k => [k, x[k]])));
-    lines = lines.filter(l => l.dec && l.ev >= 0.005).sort((a, b) => b.ev - a.ev).slice(0, maxLines);
-    props = props.filter(p => p.dec && p.ev >= (p.minEdge ?? 0.01)).sort((a, b) => b.ev - a.ev).slice(0, maxProps);
+    const evAt = (x, d) => d ? x.fairP * d - 1 : -1, bestEv = x => Math.max(x.dec ? x.ev : -1, evAt(x, x.caDec), evAt(x, x.usDec));
+    lines = lines.filter(l => bestEv(l) >= 0.005).sort((a, b) => bestEv(b) - bestEv(a)).slice(0, maxLines);
+    props = props.filter(p => bestEv(p) >= (p.minEdge ?? 0.01)).sort((a, b) => bestEv(b) - bestEv(a)).slice(0, maxProps);
 
     card.lines = lines; card.props = props;
     card.credits = { left, used };
@@ -792,13 +796,14 @@
 
   // ESPN matchup + player analysis and prebuilt parlays. Free (no odds credits), so it can be re-run on a saved card.
   const BOARD_KEEP = ['id', 'type', 'eventId', 'sport', 'lg', 'emoji', 'game', 'home', 'away', 'team', 'market', 'point', 'pick',
-    'player', 'side', 'statLabel', 'fairP', 'src', 'start', 'alt', 'oneSided', 'dec', 'book', 'ev', 'caDec', 'caBook'];
+    'player', 'side', 'statLabel', 'fairP', 'src', 'start', 'alt', 'oneSided', 'dec', 'book', 'ev', 'caDec', 'caBook', 'usDec', 'usBook'];
 
   // Evening top-up: the morning build spends the day's budget soonest-game-first, so late tips (10 PM ET NBA, West
   // Coast NHL) often end up with no sportsbook props. This buys props only for games starting in the next few hours
   // that have none yet, merges them into the saved card and re-runs the free analysis.
   async function topUpProps(card, opts) {
-    const { get, key, log = () => {}, windowH = 7, allowAll = false } = opts;
+    const { get, key, log = () => {}, windowH = 7 } = opts;
+    const books = bookMode(opts);
     const odds = q => get(`https://api.the-odds-api.com/v4${q}${q.includes('?') ? '&' : '?'}apiKey=${encodeURIComponent(key)}`);
     let left = null, used = 0;
     const track = h => { const l = parseInt(h('x-requests-remaining')); if (!isNaN(l)) left = l; used += parseInt(h('x-requests-last')) || 0; };
@@ -833,7 +838,7 @@
       }
     }
     if (!props.length) { log('top-up: nothing to add'); return { card, used, left, added: 0 }; }
-    applyBooks(props, allowAll);
+    applyBooks(props, books);
     card.board.push(...props.map(x => Object.fromEntries(BOARD_KEEP.filter(k => x[k] != null).map(k => [k, x[k]]))));
     card.props.push(...props.filter(p => p.dec && p.ev >= (p.minEdge ?? 0.01)));
     card.props.sort((a, b) => b.ev - a.ev);
