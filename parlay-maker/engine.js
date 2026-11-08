@@ -1605,8 +1605,8 @@
     const sum = await getJSON(`${base}/summary?event=${ev.e.id}`);
     const row = boxRows(sum)[normName(leg.player)];
     if (!row || row._dnp) return { result: 'void', actual: 'did not play' };
-    const v = statVal(row, leg.market);
-    if (v == null) return { result: 'ungraded' };
+    // he played but has no line in that stat table (e.g. a RB with no catches) = 0
+    const v = statVal(row, leg.market) ?? 0;
     const r = cmp(v, leg.point);
     return { result: leg.side === 'Over' ? r : r === 'won' ? 'lost' : r === 'lost' ? 'won' : r, actual: `${v} ${PROP_STATS[leg.market]?.label || ''}`.trim() };
   }
@@ -1702,6 +1702,13 @@
     if (rs.some(r => r === 'pending' || r === 'ungraded')) return 'pending';
     return rs.includes('won') ? 'won' : 'push';
   }
+  // history days hold every posted pick / parlay as lists (older days stored one of each as potd / parlay)
+  function migrateDay(h) {
+    if (!h.picks) h.picks = h.potd ? [h.potd] : [];
+    if (!h.parlays) h.parlays = h.parlay ? [h.parlay] : [];
+    delete h.potd; delete h.parlay;
+    return h;
+  }
   const SNAP = ['id', 'type', 'sport', 'lg', 'emoji', 'eventId', 'game', 'home', 'away', 'team', 'market', 'point', 'pick', 'player', 'side',
     'statLabel', 'dec', 'book', 'fairP', 'ev', 'start', 'headshot'];
   const snap = x => ({ ...Object.fromEntries(SNAP.filter(k => x[k] != null).map(k => [k, x[k]])), vibe: x.vibe?.score ?? 0,
@@ -1710,13 +1717,14 @@
   // Grade finished picks, then record today's Pick/Parlay of the Day (replaced on re-runs until its first game starts).
   async function updateHistory(history, card, get, log = () => {}) {
     const cache = {}, getJSON = url => cache[url] ||= get(url).then(r => r.json).catch(() => null), now = Date.now();
+    for (const h of history) migrateDay(h);
     for (const h of history) {
-      const legs = [h.potd, ...(h.parlay?.legs || []), ...(h.ladder?.legs || [])].filter(Boolean);
+      const legs = [...h.picks, ...h.parlays.flatMap(p => p.legs), ...(h.ladder?.legs || [])].filter(Boolean);
       for (const l of legs) if ((l.result === 'pending' || !l.result) && new Date(l.start) < now - 3.5 * 36e5) {
         Object.assign(l, await gradeLeg(l, getJSON).catch(() => ({ result: 'pending' })));
         if (l.result === 'pending' && now - new Date(l.start) > 4 * 864e5) l.result = 'ungraded';
       }
-      if (h.parlay) h.parlay.result = parlayResult(h.parlay.legs);
+      for (const p of h.parlays) p.result = parlayResult(p.legs);
       if (h.ladder) h.ladder.result = parlayResult(h.ladder.legs);
       for (const l of [...legs, ...(h.clv || [])]) if (l.type === 'line' && l.close == null && new Date(l.start) < now) {
         const cl = await closingFor(l, getJSON).catch(() => null);
@@ -1726,21 +1734,27 @@
     const byId = Object.fromEntries([...(card.board || []), ...card.lines, ...card.props].map(x => [x.id, x]));
     const potd = byId[card.potd], par = card.potdParlay, lad = card.ladder;
     const date = etDate(card.generatedAt);
-    if (potd || par || lad) {
-      const clvLegs = card.lines.filter(x => x.dec && !x.alt && !x.espnLine && x.ev >= 0.01 && x.ev < STALE).slice(0, 25).map(snap);
-      const multi = m => m && m.legs.every(id => byId[id]) ? { legs: m.legs.map(id => snap(byId[id])), dec: m.dec, p: m.p, ev: m.ev, result: 'pending' } : null;
-      const entry = { date, clv: clvLegs, potd: potd ? snap(potd) : null, parlay: multi(par), ladder: multi(lad) };
-      const i = history.findIndex(h => h.date === date);
-      // LOCKED: once a pick is posted it's the one that gets graded, win or lose. A later refresh can only fill a slot
-      // that was empty (e.g. no parlay this morning), never swap a posted pick for a different one.
-      if (i < 0) history.push(entry);
-      else for (const k of ['potd', 'parlay', 'ladder']) if (!history[i][k] && entry[k]) history[i][k] = entry[k];
-    }
-    // show the locked picks on the card, so the site and the record always match
-    const today = history.find(h => h.date === date);
+    const multi = m => m && m.legs.every(id => byId[id]) ? { legs: m.legs.map(id => snap(byId[id])), dec: m.dec, p: m.p, ev: m.ev, result: 'pending' } : null;
+    let today = history.find(h => h.date === date);
+    if (!today && (potd || par || lad)) { today = migrateDay({ date, clv: [] }); history.push(today); }
     if (today) {
-      card.potd = today.potd?.id ?? card.potd; card.potdSnap = today.potd || null;
-      for (const [k, ck] of [['parlay', 'potdParlay'], ['ladder', 'ladder']]) if (today[k]) card[ck] = { legs: today[k].legs.map(l => l.id), dec: today[k].dec, p: today[k].p, ev: today[k].ev, snaps: today[k].legs };
+      if (!today.clv?.length) today.clv = card.lines.filter(x => x.dec && !x.alt && !x.espnLine && x.ev >= 0.01 && x.ev < STALE).slice(0, 25).map(snap);
+      // EVERY posted pick is recorded. The current pick stays locked until its game starts; after that a refresh may
+      // post a new pick for a later game, and that one is added to the day too (never swapped, never dropped).
+      const started = legs => legs.some(l => l?.start && new Date(l.start) <= now);
+      const fresh = legs => legs.every(l => l?.start && new Date(l.start) > now);
+      const curP = today.picks[today.picks.length - 1];
+      if (potd && fresh([potd]) && (!curP || (started([curP]) && !today.picks.some(p => p.id === potd.id)))) today.picks.push(snap(potd));
+      const curX = today.parlays[today.parlays.length - 1], nx = multi(par);
+      const sameLegs = (a, b) => a.legs.map(l => l.id).sort().join() === b.legs.map(l => l.id).sort().join();
+      if (nx && fresh(nx.legs) && (!curX || (started(curX.legs) && !today.parlays.some(p => sameLegs(p, nx))))) today.parlays.push(nx);
+      if (!today.ladder && lad) today.ladder = multi(lad); // the ladder is one bet per day
+      // the card shows exactly what's being tracked: the latest posted pick / parlay
+      const P = today.picks[today.picks.length - 1], X = today.parlays[today.parlays.length - 1];
+      card.potd = P?.id ?? null; card.potdSnap = P || null;
+      card.potdParlay = X ? { legs: X.legs.map(l => l.id), dec: X.dec, p: X.p, ev: X.ev, snaps: X.legs } : null;
+      if (today.ladder) card.ladder = { legs: today.ladder.legs.map(l => l.id), dec: today.ladder.dec, p: today.ladder.p, ev: today.ladder.ev, snaps: today.ladder.legs };
+      card.earlierToday = { picks: today.picks.slice(0, -1), parlays: today.parlays.slice(0, -1) };
     }
     history.sort((a, b) => b.date.localeCompare(a.date));
     log(`history: ${history.length} days`);
@@ -1750,7 +1764,7 @@
   const Engine = { SPORTS, PROP_STATS, STALE, PROP_STALE, toDec, toAm, pct, esc, devig, norm, normName,
     legsFromEvents, propsFromEvent, oneSidedFromEvent, altsFromEvent, altPropsFromEvent, ladderModel, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
     parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
-    pickOfDay, parlayOfDay, ladderOfDay, ladderState, LADDER_DAYS, gradeLeg, updateHistory, parlayResult, liveStatus, closingFor, boxRows,
+    pickOfDay, parlayOfDay, ladderOfDay, ladderState, LADDER_DAYS, gradeLeg, updateHistory, migrateDay, snap, parlayResult, liveStatus, closingFor, boxRows,
     extraNotes, weatherFor, marketsFor, nhlGoalies, nflverse, makeApiFootball, apiFootballNotes, kalshiProps, kalshiNote, topUpProps, newsFor, lineupsFor, INJ_RX, injuryPlays };
   root.Engine = Engine;
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;

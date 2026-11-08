@@ -23,7 +23,11 @@
   const H = window.EDGE_HISTORY || [];
   function pickCard() {
     const daily = window.EDGE_CARD, live = store.get('liveCard', null);
-    if (live && (!daily || live.generatedAt > daily.generatedAt)) return live;
+    if (live && (!daily || live.generatedAt > daily.generatedAt)) {
+      // a Live refresh re-prices everything, but the picks stay the tracked ones from the daily card
+      if (daily) for (const k of ['potd', 'potdSnap', 'potdParlay', 'ladder', 'earlierToday']) live[k] = daily[k];
+      return live;
+    }
     return daily;
   }
   function index() {
@@ -33,6 +37,7 @@
     for (const x of card.board || []) if (!byId[x.id]) byId[x.id] = x;
     // locked picks (Pick / Parlay of the Day, ladder bet) stay findable even if their line moved off the board
     for (const x of [card.potdSnap, ...(card.potdParlay?.snaps || []), ...(card.ladder?.snaps || [])]) if (x && !byId[x.id]) byId[x.id] = x;
+    for (const x of [...(card.earlierToday?.picks || []), ...(card.earlierToday?.parlays || []).flatMap(p => p.legs)]) if (x && !byId[x.id]) byId[x.id] = x;
     // Hide games that have already started from every list (slip legs, Pick of the Day and the Live tab
     // still find them through byId, so live tracking keeps working).
     const upcoming = x => !x.start || new Date(x.start) > Date.now();
@@ -210,22 +215,26 @@
   function heroHTML() {
     const p = byId[card.potd], par = card.potdParlay;
     if (!p && !par) return '';
+    // earlier picks today, with live results from the record
+    const todayH = H.find(h => h.date === (card.generatedAt ? new Date(card.generatedAt).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }).replace(/-/g, '') : ''));
+    const res = r => r === 'won' ? '✅' : r === 'lost' ? '❌' : r === 'push' || r === 'void' ? '➖' : '⏳';
+    const earlier = todayH ? [...dayPicks(todayH).filter(x => x.id !== card.potd).map(x => `${res(x.result)} ⭐ ${esc(x.pick)}${x.actual ? ` <span class="muted">(${esc(x.actual)})</span>` : ''}`),
+      ...dayParlays(todayH).filter(x => x.legs.map(l => l.id).join() !== (par?.legs || []).join()).map(x => `${res(x.result)} 🎯 ${x.legs.map(l => esc(l.pick)).join(' + ')}`)] : [];
     const why = p ? [`<b>${signPct(p.ev)}</b> edge`, `<b>${pct(p.fairP, 0)}</b> to hit`, p.vibe ? `vibe <b>${p.vibe.score > 0 ? '+' : ''}${p.vibe.score}</b>` : '',
       p.vibe?.hit ? `cleared <b>${p.vibe.hit.hits}/${p.vibe.hit.n}</b> recent games` : '', `bet <b>${unitsTxt(unitsFor(p))}</b>`].filter(Boolean).join(' · ') : '';
-    return `<div class="hero2">
+    return `${earlier.length ? `<div class="howto" style="margin-bottom:10px">📌 <b>Earlier today</b> (tracked on the record): ${earlier.join(' · ')}</div>` : ''}<div class="hero2">
       ${p ? `<div><div class="ribbon">⭐ PICK OF THE DAY</div>${pickCard_(p, true)}<p class="note">Why it's the pick: ${why}</p></div>` : ''}
       ${par ? `<div><div class="ribbon alt">🎯 PARLAY OF THE DAY · most likely to hit</div>${parlayCard({ name: 'Parlay of the Day', emoji: '🎯', blurb: `Every leg ${'≥'}50% to win on its own, all +EV, one per game`, legs: par.legs }, true)}</div>` : ''}
     </div>`;
   }
+  const dayPicks = h => h.picks || (h.potd ? [h.potd] : []), dayParlays = h => h.parlays || (h.parlay ? [h.parlay] : []);
   function settledRows(kind) {
-    return H.map(h => {
-      if (kind === 'potd' && h.potd) return { date: h.date, dec: h.potd.dec, p: h.potd.fairP, result: h.potd.result, label: h.potd.pick, actual: h.potd.actual, odds: toAm(h.potd.dec) };
-      if (kind === 'ladder' && h.ladder) return { date: h.date, dec: h.ladder.dec, p: h.ladder.p, result: h.ladder.result, label: h.ladder.legs.map(l => l.pick).join(' + '), legs: h.ladder.legs, odds: toAm(h.ladder.dec) };
-      if (kind === 'parlay' && h.parlay) {
-        const pay = h.parlay.legs.reduce((a, l) => a * (l.result === 'won' ? l.dec : 1), 1);
-        return { date: h.date, dec: pay, p: h.parlay.p, result: h.parlay.result, label: h.parlay.legs.map(l => l.pick).join(' + '), legs: h.parlay.legs, odds: toAm(h.parlay.dec) };
-      }
-    }).filter(Boolean);
+    return H.flatMap(h => {
+      if (kind === 'potd') return dayPicks(h).map(x => ({ date: h.date, dec: x.dec, p: x.fairP, result: x.result, label: x.pick, actual: x.actual, odds: toAm(x.dec) }));
+      if (kind === 'parlay') return dayParlays(h).map(x => ({ date: h.date, dec: x.legs.reduce((a, l) => a * (l.result === 'won' ? l.dec : 1), 1), p: x.p, result: x.result, label: x.legs.map(l => l.pick).join(' + '), legs: x.legs, odds: toAm(x.dec) }));
+      if (kind === 'ladder' && h.ladder) return [{ date: h.date, dec: h.ladder.dec, p: h.ladder.p, result: h.ladder.result, label: h.ladder.legs.map(l => l.pick).join(' + '), legs: h.ladder.legs, odds: toAm(h.ladder.dec) }];
+      return [];
+    });
   }
   function recordOf(kind) {
     const rows = settledRows(kind), done = rows.filter(r => ['won', 'lost', 'push', 'void'].includes(r.result));
@@ -245,10 +254,10 @@
       <div class="dots2">${r.rows.slice(0, 10).map(resDot).join('')}</div></div>`;
     return `<div class="sec"><h2>📈 Track record</h2><span>auto-graded from final box scores · 1 unit flat stakes · <a href="#" data-tab="record">full history →</a></span></div>
       <div class="kpis" style="grid-template-columns:repeat(${c.rows.length ? 3 : 2},minmax(0,1fr))">${tile('⭐ Pick of the Day', a)}${tile('🎯 Parlay of the Day', b)}${c.rows.length ? tile('🧗 Ladder bet', c) : ''}</div>
-      <p class="note">🔒 Picks lock the moment they're posted: a later refresh can't swap a pick for a different one, so every loss counts.</p>`;
+      <p class="note">🔒 Every Pick and Parlay of the Day the site posts is recorded. A pick stays locked until its game starts; after that a new pick can be posted for a later game, and it's added here too (Pick #2, #3…). Nothing gets swapped or dropped, so every loss counts.</p>`;
   }
   function clvStats() {
-    const legs = H.flatMap(h => [...(h.clv || []), ...(h.potd?.type === 'line' ? [h.potd] : []), ...(h.parlay?.legs || []).filter(l => l.type === 'line')]);
+    const legs = H.flatMap(h => [...(h.clv || []), ...dayPicks(h).filter(l => l.type === 'line'), ...dayParlays(h).flatMap(p => p.legs).filter(l => l.type === 'line')]);
     const uniq = [...new Map(legs.map(l => [l.id, l])).values()].filter(l => l.close);
     const beat = uniq.filter(l => l.close.beat).length, withPct = uniq.filter(l => l.close.clv != null);
     const avg = withPct.length ? withPct.reduce((a, l) => a + l.close.clv, 0) / withPct.length : null;
@@ -273,9 +282,9 @@
     return `${recordStrip()}${clvPanel()}<div class="sec"><h2>Every pick, every result</h2></div>
       <div class="tbl"><div class="scroll"><table><thead><tr><th>Date</th><th>Type</th><th>Pick</th><th>Odds</th><th>Win %</th><th>Result</th><th>Final</th></tr></thead><tbody>
       ${H.map(h => [
-        h.potd ? `<tr><td>${esc(h.date.replace(/(\d{4})(\d\d)(\d\d)/, '$2/$3'))}</td><td>⭐ Pick</td><td><b>${esc(h.potd.pick)}</b><br><span class="muted">${esc(h.potd.game)}</span></td><td>${toAm(h.potd.dec)} <span class="muted">${esc(h.potd.book)}</span></td><td>${pct(h.potd.fairP, 0)}</td><td>${badge(h.potd.result)}</td><td class="muted">${esc(h.potd.actual || '')}</td></tr>` : '',
+        ...dayPicks(h).map((x, i) => `<tr><td>${esc(h.date.replace(/(\d{4})(\d\d)(\d\d)/, '$2/$3'))}</td><td>⭐ Pick${dayPicks(h).length > 1 ? ` #${i + 1}` : ''}</td><td><b>${esc(x.pick)}</b><br><span class="muted">${esc(x.game)}</span></td><td>${toAm(x.dec)} <span class="muted">${esc(x.book)}</span></td><td>${pct(x.fairP, 0)}</td><td>${badge(x.result)}</td><td class="muted">${esc(x.actual || '')}</td></tr>`),
         h.ladder ? `<tr><td>${esc(h.date.replace(/(\d{4})(\d\d)(\d\d)/, '$2/$3'))}</td><td>🧗 Ladder</td><td>${h.ladder.legs.map(l => `${badge(l.result).replace(/ (Won|Lost|Push|Void|Pending|n\/a)/, '')} ${esc(l.pick)} <span class="muted">${esc(l.actual || '')}</span>`).join('<br>')}</td><td>${toAm(h.ladder.dec)}</td><td>${pct(h.ladder.p, 0)}</td><td>${badge(h.ladder.result)}</td><td></td></tr>` : '',
-        h.parlay ? `<tr><td>${esc(h.date.replace(/(\d{4})(\d\d)(\d\d)/, '$2/$3'))}</td><td>🎯 Parlay</td><td>${h.parlay.legs.map(l => `${badge(l.result).replace(/ (Won|Lost|Push|Void|Pending|n\/a)/, '')} ${esc(l.pick)} <span class="muted">${esc(l.actual || '')}</span>`).join('<br>')}</td><td>${toAm(h.parlay.dec)}</td><td>${pct(h.parlay.p, 0)}</td><td>${badge(h.parlay.result)}</td><td></td></tr>` : '',
+        ...dayParlays(h).map((x, i) => `<tr><td>${esc(h.date.replace(/(\d{4})(\d\d)(\d\d)/, '$2/$3'))}</td><td>🎯 Parlay${dayParlays(h).length > 1 ? ` #${i + 1}` : ''}</td><td>${x.legs.map(l => `${badge(l.result).replace(/ (Won|Lost|Push|Void|Pending|n\/a)/, '')} ${esc(l.pick)} <span class="muted">${esc(l.actual || '')}</span>`).join('<br>')}</td><td>${toAm(x.dec)}</td><td>${pct(x.p, 0)}</td><td>${badge(x.result)}</td><td></td></tr>`),
       ].join('')).join('')}
       </tbody></table></div></div>`;
   }
