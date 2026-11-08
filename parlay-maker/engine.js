@@ -403,7 +403,7 @@
             const row = {};
             e.stats.forEach((v, i) => { if (names[i]) row[names[i]] = v; if (labels[i]) row[labels[i]] = v; });
             const meta = g.events?.[e.eventId] || {};
-            rows.push({ date: meta.gameDate || '', opp: meta.opponent?.abbreviation || '', at: meta.atVs || '', row });
+            rows.push({ eid: String(e.eventId || ''), date: meta.gameDate || '', opp: meta.opponent?.abbreviation || '', at: meta.atVs || '', row });
           }
           if (rows.length) break; // only the most recent season type with games
         }
@@ -918,6 +918,102 @@
     return out;
   }
 
+  // ---------------- 🚑 Injury plays ----------------
+  // A starter is out → who gets his carries / shots / targets? For every teammate with a prop on the board, split his
+  // season game log into games WITH the injured starter and games WITHOUT him (the starter's own log tells us which
+  // games he played). The without-games are the best preview of tonight: if the backup clears the line most of those
+  // games, the Over is a good bet; if his numbers didn't move, the "next man up" hype is already priced in or wrong.
+  const ROLE = {
+    fb: { QB: /pass|rush/, RB: /rush|reception|anytime_td/, REC: /reception|anytime_td/ },
+    bb: { G: /points|assists|threes|pra|points_rebounds|points_assists/, F: /points|rebounds|pra/, C: /rebounds|points|blocks/ },
+  };
+  async function injuryPlays(card, espn) {
+    const out = [];
+    for (const [eid, L] of Object.entries(card.lineups || {})) {
+      const g = card.games[eid]; if (!g || !['fb', 'bb'].includes(g.kind)) continue;
+      for (const side of ['home', 'away']) {
+        const team = g[side], starters = L[side]?.players || [];
+        for (const p of starters.filter(p => MISSING(p.st || '') || /questionable/i.test(p.st || ''))) {
+          const sure = MISSING(p.st || '');
+          const myLog = await espn.gamelog(g.sport, p.id);
+          const played = new Set(myLog.map(r => r.eid));
+          const role = g.kind === 'fb' ? p.pos : (p.pos || '').replace(/^(PG|SG)$/, 'G').replace(/^(SF|PF)$/, 'F')[0];
+          const rx = ROLE[g.kind]?.[role] || /./;
+          const rawMates = (card.board || []).filter(x => x.type === 'prop' && x.side === 'Over' && x.aid && x.aid !== p.id
+            && (x.eventId === eid || (x.game && x.home === g.home.name && x.away === g.away.name) || (x.team === team.abbr && Math.abs(new Date(x.start) - new Date(g.start)) < 6 * 36e5))
+            && x.team === team.abbr && (!x.alt || x.kalshi));
+          // one line per player + stat: the sportsbook main line, else the Kalshi rung closest to a coin flip
+          const pickOne = {};
+          for (const x of rawMates) {
+            const k = x.aid + x.market, cur = pickOne[k], sc = y => (y.alt ? 1 : 0) + Math.abs((y.fairP ?? 0.5) - 0.5);
+            if (!cur || sc(x) < sc(cur)) pickOne[k] = x;
+          }
+          const mates = Object.values(pickOne);
+          const plays = [];
+          for (const x of mates) {
+            const lg = await espn.gamelog(x.sport, x.aid);
+            const vals = (cond) => lg.filter(r => r.eid && cond(r)).map(r => statVal(r.row, x.market)).filter(v => v != null);
+            const w = vals(r => played.has(r.eid)), wo = vals(r => !played.has(r.eid));
+            if (!w.length && !wo.length) continue;
+            const avg = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
+            const aW = avg(w), aWo = avg(wo), hitWo = wo.length ? wo.filter(v => v > x.point).length / wo.length : null;
+            const grp = pos => g.kind === 'fb' ? (/QB/.test(pos || '') ? 'QB' : /RB|FB/.test(pos || '') ? 'RB' : /WR|TE|REC/.test(pos || '') ? 'REC' : '?') : String(pos || '?').replace(/^(PG|SG)$/, 'G').replace(/^(SF|PF)$/, 'F')[0];
+            const samePos = grp(x.pos) === grp(p.pos);
+            const roleFit = rx.test(x.market) && (g.kind !== 'fb' || samePos || (p.pos === 'REC' && /reception/.test(x.market)));
+            const qbDown = g.kind === 'fb' && p.pos === 'QB' && !samePos && /reception/.test(x.market);
+            const hitW = w.length ? w.filter(v => v > x.point).length / w.length : null;
+            const verb = /rush/.test(x.market) ? 'carries' : /reception|rec/.test(x.market) ? 'targets' : /pass/.test(x.market) ? 'snaps' : g.kind === 'bb' ? 'shots and minutes' : 'touches';
+            let verdict, why;
+            if (wo.length >= 2) {
+              const bump = aW != null ? aWo - aW : 0;
+              if (hitWo >= 0.6 && aWo > x.point && bump >= 0) {
+                verdict = 'good'; why = `Without ${p.n}: ${aWo.toFixed(1)} avg, over ${x.point} in ${wo.filter(v => v > x.point).length}/${wo.length} games${aW != null ? ` (with him: ${aW.toFixed(1)})` : ''}.`;
+                // the market may already know: if the price already implies that hit rate, the value is gone
+                if (x.fairP != null && x.fairP >= hitWo - 0.03) { verdict = 'risky'; why += ` But the price already has him at ${Math.round(x.fairP * 100)}%, so the market has adjusted.`; }
+              }
+              else if (hitWo <= 0.4 && aWo < x.point) { verdict = 'bad'; why = `Without ${p.n} he still averaged only ${aWo.toFixed(1)}: over ${x.point} in just ${wo.filter(v => v > x.point).length}/${wo.length}. The Under is the better side.`; }
+              else { verdict = 'risky'; why = `Mixed: ${aWo.toFixed(1)} avg without ${p.n}, ${wo.filter(v => v > x.point).length}/${wo.length} over ${x.point}.`; }
+            } else if (qbDown) {
+              if (aW != null && aW > x.point * 1.25) {
+                verdict = 'risky';
+                why = `${p.n} out means the backup QB starts, which is a downgrade. But ${x.player} averages ${aW.toFixed(1)} vs a ${x.point} line, so he has a cushion. Small stake at most.`;
+              } else {
+                verdict = 'bad';
+                why = `${p.n} out means the backup QB starts. Pass catchers usually lose volume and efficiency. ${x.player} averages ${aW?.toFixed(1) ?? '–'} with the starter, so lean Under ${x.point}.`;
+              }
+            } else if (roleFit) {
+              const hits = w.filter(v => v > x.point).length;
+              if (hitW != null && w.length >= 3 && hitW >= 0.6 && aW > x.point) {
+                verdict = x.fairP != null && x.fairP >= hitW - 0.03 ? 'risky' : 'good';
+                why = `${x.player} already clears ${x.point} in ${hits}/${w.length} games (avg ${aW.toFixed(1)}) WITH ${p.n}. Now he gets more ${verb}.` + (verdict === 'risky' ? ` The price (${Math.round(x.fairP * 100)}%) already reflects it, though.` : '');
+              } else if (aW != null && w.length >= 3 && aW < x.point * 0.75) {
+                verdict = 'risky';
+                why = `The line (${x.point}) is way above his ${aW.toFixed(1)} avg. The book already priced in the bigger role, so only bet it at plus money.`;
+              } else {
+                verdict = 'risky';
+                why = `${p.n} has barely missed games, so there's no without-him sample yet. ${x.player} should see more ${verb}. Avg ${aW?.toFixed(1) ?? '–'} vs line ${x.point}, ${hits}/${w.length} over.`;
+              }
+            } else continue;
+            if (!sure && (verdict !== 'bad' || qbDown)) verdict = 'risky', why = `${p.n} is only questionable. If he plays, there's no bump. ` + why;
+            plays.push({ id: x.id, player: x.player, pick: x.pick, market: x.market, statLabel: x.statLabel, point: x.point, dec: x.dec, fairP: x.fairP, book: x.book, ev: x.ev,
+              headshot: x.headshot, verdict, why, avgW: aW != null ? +aW.toFixed(1) : null, avgWo: aWo != null ? +aWo.toFixed(1) : null, nWo: wo.length, hitWo: hitWo != null ? +hitWo.toFixed(2) : null, roleFit,
+              score: (verdict === 'good' ? 3 : verdict === 'risky' ? 1 : 2) + (samePos ? 1 : 0) + (roleFit ? 1 : 0) + (aWo != null && aW != null ? Math.min(2, Math.max(-2, (aWo - aW) / Math.max(1, aW) * 4)) : 0) });
+          }
+          // the injured player's own lines, if a book still has them up (questionable / doubtful)
+          const own = (card.board || []).filter(x => x.type === 'prop' && x.side === 'Over' && (x.aid === p.id || normName(x.player || '') === normName(p.n)) && x.team === team.abbr && (!x.alt || x.kalshi))
+            .sort((a, b) => Math.abs((a.fairP ?? .5) - .5) - Math.abs((b.fairP ?? .5) - .5)).filter((x, i, a) => a.findIndex(y => y.market === x.market) === i).slice(0, 3)
+            .map(x => ({ id: x.id, player: x.player, pick: x.pick, market: x.market, statLabel: x.statLabel, point: x.point, dec: x.dec, fairP: x.fairP, book: x.book, verdict: 'avoid', own: true,
+              why: `${p.n} is listed ${p.st}. Even if he suits up, minutes could be limited. Stay off his Overs.`, score: 0 }));
+          plays.sort((a, b) => b.score - a.score);
+          if (plays.length || own.length) out.push({ eventId: eid, lg: g.lg, sport: g.sport, start: g.start, game: `${g.away.name} @ ${g.home.name}`, home: g.home.name, away: g.away.name,
+            team: team.abbr, teamName: team.name, logo: team.logo, out: { n: p.n, pos: p.pos, st: p.st, why: p.why || '', ln: p.ln || '' },
+            plays: [...plays.slice(0, 8), ...own] });
+        }
+      }
+    }
+    return out;
+  }
+
   async function analyzeCard(card, get, log = () => {}, opts = {}) {
     const af = makeApiFootball(opts.apiFootballKey, get);
     // drop anything that has already started (matters when re-running on a saved card)
@@ -982,6 +1078,7 @@
       for (const x of group) {
         const k = done[x.id];
         x.headshot = k?.headshot || ath?.headshot || '';
+        if (ath?.id) { x.aid = ath.id; x.pos = ath.pos; }
         x.team = k?.team || (side ? bd[side].abbr : '');
         if (side) x.opp = bd[side === 'home' ? 'away' : 'home'].abbr;
         const v = k?.vibe || analyzeProp(x, logs, bd, side);
@@ -1017,6 +1114,8 @@
     card.news = await newsFor(card, getJSON).catch(() => ({}));
     card.lineups = await lineupsFor(card, getJSON, nowD).catch(() => ({}));
     card.newsAt = new Date().toISOString();
+    card.injuryPlays = await injuryPlays(card, espn).catch(e => (log('injury plays failed: ' + e.message), []));
+    log(`injury plays: ${card.injuryPlays.length} starters out/questionable · ${card.injuryPlays.flatMap(x => x.plays).filter(p => p.verdict === 'good').length} good bets`);
     log(`news: ${Object.values(card.news).flat().length} stories · lineups for ${Object.keys(card.lineups).length} games`);
     log(`analyzed ${Object.keys(card.games).length} games${af ? ` · API-Football calls ${af.calls()}` : ''}`);
     return card;
@@ -1603,7 +1702,7 @@
     legsFromEvents, propsFromEvent, oneSidedFromEvent, altsFromEvent, altPropsFromEvent, ladderModel, applyBooks, makeEspn, statVal, analyzeLine, analyzeProp, projection, isOut,
     parlayStats, buildParlays, parlayPool, buildCard, analyzeCard,
     pickOfDay, parlayOfDay, gradeLeg, updateHistory, parlayResult, liveStatus, closingFor, boxRows,
-    extraNotes, weatherFor, marketsFor, nhlGoalies, nflverse, makeApiFootball, apiFootballNotes, kalshiProps, kalshiNote, topUpProps, newsFor, lineupsFor, INJ_RX };
+    extraNotes, weatherFor, marketsFor, nhlGoalies, nflverse, makeApiFootball, apiFootballNotes, kalshiProps, kalshiNote, topUpProps, newsFor, lineupsFor, INJ_RX, injuryPlays };
   root.Engine = Engine;
   if (typeof module !== 'undefined' && module.exports) module.exports = Engine;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -236,6 +236,24 @@
   .inj.out { background: color-mix(in srgb, var(--bad) 18%, var(--panel2)); }
   .inj.doubt { background: color-mix(in srgb, var(--bad) 10%, var(--panel2)); }
   .inj.q { background: color-mix(in srgb, #ffcc4d 20%, var(--panel2)); }
+  .ipcard { gap: 8px; }
+  .ipout { display: flex; gap: 10px; align-items: center; background: color-mix(in srgb, var(--bad) 10%, var(--panel2)); border-radius: 12px; padding: 8px 10px; }
+  .ipout img { width: 32px; height: 32px; object-fit: contain; }
+  .iprow { border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 12px; padding: 8px 10px; }
+  .iprow.v-good { border-left-color: var(--edge); } .iprow.v-bad { border-left-color: var(--bad); } .iprow.v-risky { border-left-color: var(--warn); }
+  .iphead { display: flex; gap: 10px; align-items: center; font-size: 14px; }
+  .verd { font-size: 11.5px; font-weight: 800; border-radius: 6px; padding: 1px 7px; display: inline-block; margin-top: 2px; }
+  .verd.v-good { background: var(--edgebg); color: var(--edge); } .verd.v-bad { background: var(--badbg); color: var(--bad); } .verd.v-risky { background: var(--warnbg); color: var(--warn); }
+  .ipbars { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; margin-top: 6px; font-size: 11px; }
+  .ipbars small { color: var(--muted); }
+  .ipbar { position: relative; height: 16px; background: var(--chip); border-radius: 6px; overflow: hidden; }
+  .ipbar i { position: absolute; inset: 0 auto 0 0; background: color-mix(in srgb, var(--muted) 45%, transparent); }
+  .ipbar.wo i { background: color-mix(in srgb, var(--accent) 60%, transparent); }
+  .ipbar span { position: relative; padding-left: 6px; font-weight: 800; font-size: 11px; line-height: 16px; }
+  .ipline { font-size: 12px; white-space: nowrap; }
+  .ipmore summary { cursor: pointer; font-size: 12.5px; color: var(--muted); padding: 4px 2px; }
+  .ipmore[open] { display: flex; flex-direction: column; gap: 8px; }
+  .ipwhy { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); }
   .nlist { display: flex; flex-direction: column; gap: 8px; }
   .nitem { display: flex; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px; color: inherit; text-decoration: none; }
   .nitem img { width: 96px; height: 64px; object-fit: cover; border-radius: 8px; flex: none; }

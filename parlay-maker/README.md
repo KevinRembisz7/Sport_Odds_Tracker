@@ -16,6 +16,11 @@ Daily +EV sports picks, **player props** and parlays. Every price is checked aga
   - **📋 Lineups & injuries** (one card per game): confirmed soccer XIs once posted (about an hour before kickoff), otherwise projected starters from each team's last game (NBA, soccer), likely NHL goalies and the full injury report. When a projected starter is on the report as out or doubtful, a ⚠️ box flags it: teammates' props and the team total are where the books can lag.
   - **📰 Headlines**: ESPN stories for every sport on the card, with an 🚑 injury-only toggle.
   - **Cost and freshness**: all free. It updates every time the card refreshes, 7 times a day.
+- **🚑 Injury plays** (News tab, the default view): for each starter who's out or questionable, the app checks which teammates pick up his role.
+  - **With/without split**: each teammate's game log is split into games WITH and WITHOUT the starter. ✅ Good bet = he cleared this line in most games without him, and the price hasn't caught up. ❌ Bad bet = his numbers didn't rise, so take the Under.
+  - **New injuries (no without-him games yet)**: ✅ when the backup already clears the line and now gets more volume. ⚠️ when the line already jumped above his average.
+  - **QB out**: pass catchers lean Under.
+  - **Questionable starters**: everything is capped at ⚠️ Risky, and their own Overs get 🚫 Avoid.
 - **📋 bet365 sheet**: The Odds API doesn't carry bet365, so the card ships fair odds for every line and prop. You type in bet365's price and the app computes your edge.
 
 ## Files

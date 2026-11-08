@@ -15,7 +15,7 @@
     slip: store.get('slip', []), bankroll: store.get('bankroll', 500), kfrac: store.get('kfrac', 0.25),
     key: store.get('key', ''), budget: store.get('budget2', 8), allBooks: store.get('allBooks', false),
     unit: store.get('unit', 0), day: 'ALL', time: 'ALL', team: 'ALL', glType: store.get('glType', 'ALL'),
-    myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), allPlayers: store.get('allPlayers', false), newsSec: store.get('newsSec', 'lineups'), injOnly: false, bestOnly: store.get('bestOnly', false), prices: store.get('prices', {}), type: 'ALL', shown: 120,
+    myBook: store.get('myBook', 'bet365'), section: store.get('section', 'props'), allPlayers: store.get('allPlayers', false), newsSec: store.get('newsSec', 'plays'), injOnly: false, bestOnly: store.get('bestOnly', false), prices: store.get('prices', {}), type: 'ALL', shown: 120,
   };
   const B365 = () => S.myBook === 'bet365';
   const EDGE_BUFFER = 0.02; // target price = break-even + 2% EV
@@ -705,18 +705,52 @@
     return `<div class="card ncard">
       <div class="c-top"><span class="tag">${esc(g.lg)}</span><span>${esc(fmtTime(g.start))}</span><span class="spacer"></span>${props ? `<button class="btn small" data-newsteam="${esc(g.home.name)}">🎯 ${props} props →</button>` : ''}</div>
       <h3 style="margin:0">${esc(g.away.name)} @ ${esc(g.home.name)}</h3>
-      ${outStarters.length ? `<div class="impact">⚠️ <b>Lineup change:</b> ${outStarters.map(p => `${esc(p.n)} (${esc(p.team.abbr)}, ${esc(p.st)})`).join(', ')} started last game but ${outStarters.length > 1 ? 'are' : 'is'} on the report. Teammates pick up minutes and usage, so check their props and the team total. Lines can be slow to move.</div>` : ''}
+      ${outStarters.length ? `<div class="impact">⚠️ <b>Lineup change:</b> ${outStarters.map(p => `${esc(p.n)} (${esc(p.team.abbr)}, ${esc(p.st)})`).join(', ')} started last game but ${outStarters.length > 1 ? 'are' : 'is'} on the report. Teammates pick up minutes and usage, so check their props and the team total. Lines can be slow to move.${IPLAYS().some(x => x.eventId === id) ? ' <button class="btn small" data-newssec="plays">🚑 See the injury plays →</button>' : ''}</div>` : ''}
       ${L.goalies ? `<div class="goalies">🥅 Likely goalies: ${['away', 'home'].map(s => L.goalies[s] ? `<b>${esc(L.goalies[s].n)}</b> <span class="muted">${esc(g[s].abbr)} · ${L.goalies[s].sv?.toFixed(3).replace(/^0/, '')} SV%</span>` : `<span class="muted">${esc(g[s].abbr)} TBD</span>`).join(' vs ')}</div>` : ''}
       ${L.home || L.away ? `<div class="lus">${lineupSide(g.away, L.away, id)}${lineupSide(g.home, L.home, id)}</div>` : ''}
       <div class="injs">🚑 ${injuryBlock(g.away)}${injuryBlock(g.home)}</div>
     </div>`;
   }
+  // ---------- 🚑 Injury plays: starter out → backup's with/without split → good / risky / bad bet ----------
+  const IPLAYS = () => card.injuryPlays || window.EDGE_CARD?.injuryPlays || [];
+  const VERD = { good: ['✅ Good bet', 'v-good'], risky: ['⚠️ Risky', 'v-risky'], bad: ['❌ Bad bet: take the Under', 'v-bad'], avoid: ['🚫 Avoid', 'v-bad'] };
+  function underOf(p) { return (card.board || []).find(x => x.type === 'prop' && x.side === 'Under' && x.market === p.market && x.point === p.point && E.normName(x.player || '') === E.normName(p.player)); }
+  function playRow(p) {
+    const [vl, vc] = VERD[p.verdict];
+    const bet = p.verdict === 'bad' ? underOf(p) : p.verdict === 'avoid' ? null : byId[p.id];
+    const label = p.verdict === 'bad' ? `Under ${p.point} ${p.statLabel}` : p.own ? `Over ${p.point} ${p.statLabel}` : `Over ${p.point} ${p.statLabel}`;
+    const price = bet?.dec ? `<b>${E.toAm(bet.dec)}</b> <span class="muted" style="font-size:11px">${esc(bet.book || '')}</span>` : bet?.fairP ? `<span class="muted" style="font-size:12px">fair ${E.toAm(1 / bet.fairP)}</span>` : p.fairP ? `<span class="muted" style="font-size:12px">fair ${E.toAm(1 / (p.verdict === 'bad' ? 1 - p.fairP : p.fairP))}</span>` : '';
+    const mx = Math.max(p.avgW || 0, p.avgWo || 0, p.point || 0) || 1, bar = (v, cls) => v == null ? '' : `<div class="ipbar ${cls}"><i style="width:${Math.min(100, v / mx * 100)}%"></i><span>${v}</span></div>`;
+    return `<div class="iprow ${vc}">
+      <div class="iphead">${p.headshot ? `<div class="avatar"><img src="${esc(p.headshot)}" alt="" loading="lazy" onerror="this.remove()"></div>` : ''}
+        <div style="min-width:0;flex:1"><b>${esc(p.player)}</b> <span>${esc(label)}</span><div><span class="verd ${vc}">${vl}</span></div></div>
+        <div style="text-align:right">${price}${bet ? `<div><button class="add ${S.slip.includes(bet.id) ? 'in' : ''}" data-add="${esc(bet.id)}">${S.slip.includes(bet.id) ? '✓' : '+'}</button></div>` : ''}</div></div>
+      ${p.avgW != null || p.avgWo != null ? `<div class="ipbars"><div><small>with him</small>${bar(p.avgW, 'w')}</div><div><small>without him${p.nWo ? ` (${p.nWo} g)` : ''}</small>${bar(p.avgWo, 'wo')}</div><div class="ipline">line <b>${p.point}</b></div></div>` : ''}
+      <p class="ipwhy">${esc(p.why)}</p></div>`;
+  }
+  function injuryCard(x) {
+    return `<div class="card ipcard">
+      <div class="c-top"><span class="tag">${esc(x.lg)}</span><span>${esc(fmtTime(x.start))}</span><span class="spacer"></span><span class="muted" style="font-size:12px">${esc(x.game)}</span></div>
+      <div class="ipout">${x.logo ? `<img src="${esc(x.logo)}" alt="" loading="lazy" onerror="this.remove()">` : ''}<div><b>${esc(x.out.n)}</b> <span class="muted">${esc(x.out.pos)} · ${esc(x.team)}</span><div><span class="inj ${stTone(x.out.st)}">${esc(x.out.st)}${x.out.why ? ' · ' + esc(x.out.why) : ''}</span>${x.out.ln ? ` <span class="muted" style="font-size:11.5px">last game: ${esc(x.out.ln)}</span>` : ''}</div></div></div>
+      <div class="muted" style="font-size:12.5px">Who picks up his ${/QB/.test(x.out.pos) ? 'snaps' : /RB/.test(x.out.pos) ? 'carries' : /REC|WR|TE/.test(x.out.pos) ? 'targets' : 'shots and minutes'}?</div>
+      ${(() => { const strong = x.plays.filter(p => p.verdict !== 'risky'), risky = x.plays.filter(p => p.verdict === 'risky');
+        return strong.map(playRow).join('') + risky.slice(0, Math.max(1, 4 - strong.length)).map(playRow).join('')
+          + (risky.length > Math.max(1, 4 - strong.length) ? `<details class="ipmore"><summary>${risky.length - Math.max(1, 4 - strong.length)} more risky lines</summary>${risky.slice(Math.max(1, 4 - strong.length)).map(playRow).join('')}</details>` : ''); })()}</div>`;
+  }
+  function viewInjuryPlays(head, seg) {
+    const all = IPLAYS().map(x => ({ ...x, pick: x.plays.map(p => p.player).join(' ') + ' ' + x.out.n }));
+    const items = filtered(all).filter(x => new Date(x.start) > Date.now()).sort((a, b) => (b.plays.filter(p => p.verdict === 'good').length - a.plays.filter(p => p.verdict === 'good').length) || a.start.localeCompare(b.start));
+    const good = items.flatMap(x => x.plays).filter(p => p.verdict === 'good').length;
+    return head + seg + `<div class="howto">🚑 <b>How it works:</b> for every starter who's out, the app splits each teammate's game log into games <b>with</b> and <b>without</b> him. ✅ Good bet = the backup cleared this line in most games without him. ❌ Bad bet = his numbers didn't go up, so take the Under. ⚠️ Risky = small sample or the starter is only questionable. ${good ? `<b>${good} good bets</b> right now.` : ''}</div>`
+      + (items.length ? `<div class="ngrid">${items.map(injuryCard).join('')}</div>` : empty('No starters out with props on their teammates for this filter. These show up when a starter is on the report and books have posted props for that game.'));
+  }
   function viewNews() {
     const sec = S.newsSec;
-    const seg = `<div class="seg"><button class="${sec === 'lineups' ? 'on' : ''}" data-newssec="lineups">📋 Lineups & injuries</button><button class="${sec === 'headlines' ? 'on' : ''}" data-newssec="headlines">📰 Headlines</button></div>`;
+    const seg = `<div class="seg"><button class="${sec === 'plays' ? 'on' : ''}" data-newssec="plays">🚑 Injury plays <span>${IPLAYS().filter(x => new Date(x.start) > Date.now()).flatMap(x => x.plays).filter(p => p.verdict === 'good').length}</span></button><button class="${sec === 'lineups' ? 'on' : ''}" data-newssec="lineups">📋 Lineups & injuries</button><button class="${sec === 'headlines' ? 'on' : ''}" data-newssec="headlines">📰 Headlines</button></div>`;
     const stamp = card.newsAt || window.EDGE_CARD?.newsAt;
     const head = `<div class="sec"><h2>📰 Daily News</h2><span>${S.lg === 'ALL' ? 'every sport' : esc(S.lg)} · updated ${stamp ? ago(stamp) : 'with the daily card'} · tap a sport above to filter</span></div>
       <div class="howto">💡 <b>How to use it:</b> if a starter is ruled out after the lines open, the book may not have adjusted yet. Bet his teammates' overs (more shots and minutes) or the opponent before the price moves. The ⚠️ boxes flag those spots.</div>`;
+    if (sec === 'plays') return viewInjuryPlays(head, seg);
     if (sec === 'headlines') {
       const q = E.norm(S.q);
       let arts = Object.entries(NEWS()).filter(([lg]) => S.lg === 'ALL' || lg === S.lg).flatMap(([lg, a]) => a.map(x => ({ ...x, lg })));
